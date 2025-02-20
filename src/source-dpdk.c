@@ -1,4 +1,4 @@
-/* Copyright (C) 2021 Open Information Security Foundation
+/* Copyright (C) 2021-2025 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -88,11 +88,20 @@ TmEcode NoDPDKSupportExit(ThreadVars *tv, const void *initdata, void **data)
 #include "util-affinity.h"
 #include "util-dpdk.h"
 #include "util-dpdk-i40e.h"
+#include "util-dpdk-ice.h"
+#include "util-dpdk-ixgbe.h"
+#include "util-dpdk-mlx5.h"
 #include "util-dpdk-bonding.h"
 #include <numa.h>
 
 #define BURST_SIZE 32
-static struct timeval machine_start_time = { 0, 0 };
+// interrupt mode constants
+#define MIN_ZERO_POLL_COUNT          10U
+#define MIN_ZERO_POLL_COUNT_TO_SLEEP 10U
+#define MINIMUM_SLEEP_TIME_US        1U
+#define STANDARD_SLEEP_TIME_US       100U
+#define MAX_EPOLL_TIMEOUT_MS         500U
+static rte_spinlock_t intr_lock[RTE_MAX_ETHPORTS];
 
 /**
  * \brief Structure to hold thread specific variables.
@@ -104,6 +113,7 @@ typedef struct DPDKThreadVars_ {
     TmSlot *slot;
     LiveDevice *livedev;
     ChecksumValidationMode checksum_mode;
+    bool intr_enabled;
     /* references to packet and drop counters */
     uint16_t capture_dpdk_packets;
     uint16_t capture_dpdk_rx_errs;
@@ -126,6 +136,7 @@ typedef struct DPDKThreadVars_ {
     int32_t port_socket_id;
     struct rte_mempool *pkt_mempool;
     struct rte_mbuf *received_mbufs[BURST_SIZE];
+    DPDKWorkerSync *workers_sync;
 } DPDKThreadVars;
 
 static TmEcode ReceiveDPDKThreadInit(ThreadVars *, const void *, void **);
@@ -137,79 +148,61 @@ static TmEcode DecodeDPDKThreadInit(ThreadVars *, const void *, void **);
 static TmEcode DecodeDPDKThreadDeinit(ThreadVars *tv, void *data);
 static TmEcode DecodeDPDK(ThreadVars *, Packet *, void *);
 
-static uint64_t CyclesToMicroseconds(uint64_t cycles);
-static uint64_t CyclesToSeconds(uint64_t cycles);
 static void DPDKFreeMbufArray(struct rte_mbuf **mbuf_array, uint16_t mbuf_cnt, uint16_t offset);
-static uint64_t DPDKGetSeconds(void);
+static bool InterruptsRXEnable(uint16_t port_id, uint16_t queue_id)
+{
+    uint32_t event_data = port_id << UINT16_WIDTH | queue_id;
+    int32_t ret = rte_eth_dev_rx_intr_ctl_q(port_id, queue_id, RTE_EPOLL_PER_THREAD,
+            RTE_INTR_EVENT_ADD, (void *)((uintptr_t)event_data));
 
-static void DPDKFreeMbufArray(struct rte_mbuf **mbuf_array, uint16_t mbuf_cnt, uint16_t offset)
+    if (ret != 0) {
+        SCLogError("%s-Q%d: failed to enable interrupt mode: %s", DPDKGetPortNameByPortID(port_id),
+                queue_id, rte_strerror(-ret));
+        return false;
+    }
+    return true;
+}
+
+static inline uint32_t InterruptsSleepHeuristic(uint32_t no_pkt_polls_count)
+{
+    if (no_pkt_polls_count < MIN_ZERO_POLL_COUNT_TO_SLEEP)
+        return MINIMUM_SLEEP_TIME_US;
+
+    return STANDARD_SLEEP_TIME_US;
+}
+
+static inline void InterruptsTurnOnOff(uint16_t port_id, uint16_t queue_id, bool on)
+{
+    rte_spinlock_lock(&(intr_lock[port_id]));
+
+    if (on)
+        rte_eth_dev_rx_intr_enable(port_id, queue_id);
+    else
+        rte_eth_dev_rx_intr_disable(port_id, queue_id);
+
+    rte_spinlock_unlock(&(intr_lock[port_id]));
+}
+
+static inline void DPDKFreeMbufArray(
+        struct rte_mbuf **mbuf_array, uint16_t mbuf_cnt, uint16_t offset)
 {
     for (int i = offset; i < mbuf_cnt; i++) {
         rte_pktmbuf_free(mbuf_array[i]);
     }
 }
 
-static uint64_t CyclesToMicroseconds(const uint64_t cycles)
-{
-    const uint64_t ticks_per_us = rte_get_tsc_hz() / 1000000;
-    if (ticks_per_us == 0) {
-        return 0;
-    }
-    return cycles / ticks_per_us;
-}
-
-static uint64_t CyclesToSeconds(const uint64_t cycles)
-{
-    const uint64_t ticks_per_s = rte_get_tsc_hz();
-    if (ticks_per_s == 0) {
-        return 0;
-    }
-    return cycles / ticks_per_s;
-}
-
-static void CyclesAddToTimeval(
-        const uint64_t cycles, struct timeval *orig_tv, struct timeval *new_tv)
-{
-    uint64_t usec = CyclesToMicroseconds(cycles) + orig_tv->tv_usec;
-    new_tv->tv_sec = orig_tv->tv_sec + usec / 1000000;
-    new_tv->tv_usec = (usec % 1000000);
-}
-
-void DPDKSetTimevalOfMachineStart(void)
-{
-    gettimeofday(&machine_start_time, NULL);
-    machine_start_time.tv_sec -= DPDKGetSeconds();
-}
-
-/**
- * Initializes real_tv to the correct real time. Adds TSC counter value to the timeval of
- * the machine start
- * @param machine_start_tv - timestamp when the machine was started
- * @param real_tv
- */
-static SCTime_t DPDKSetTimevalReal(struct timeval *machine_start_tv)
-{
-    struct timeval real_tv;
-    CyclesAddToTimeval(rte_get_tsc_cycles(), machine_start_tv, &real_tv);
-    return SCTIME_FROM_TIMEVAL(&real_tv);
-}
-
-/* get number of seconds from the reset of TSC counter (typically from the machine start) */
-static uint64_t DPDKGetSeconds(void)
-{
-    return CyclesToSeconds(rte_get_tsc_cycles());
-}
-
 static void DevicePostStartPMDSpecificActions(DPDKThreadVars *ptv, const char *driver_name)
 {
-    if (strcmp(driver_name, "net_bonding") == 0) {
+    if (strcmp(driver_name, "net_bonding") == 0)
         driver_name = BondingDeviceDriverGet(ptv->port_id);
-    }
-
-    // The PMD Driver i40e has a special way to set the RSS, it can be set via rte_flow rules
-    // and only after the start of the port
     if (strcmp(driver_name, "net_i40e") == 0)
-        i40eDeviceSetRSS(ptv->port_id, ptv->threads);
+        i40eDeviceSetRSS(ptv->port_id, ptv->threads, ptv->livedev->dev);
+    else if (strcmp(driver_name, "net_ixgbe") == 0)
+        ixgbeDeviceSetRSS(ptv->port_id, ptv->threads, ptv->livedev->dev);
+    else if (strcmp(driver_name, "net_ice") == 0)
+        iceDeviceSetRSS(ptv->port_id, ptv->threads, ptv->livedev->dev);
+    else if (strcmp(driver_name, "mlx5_pci") == 0)
+        mlx5DeviceSetRSS(ptv->port_id, ptv->threads, ptv->livedev->dev);
 }
 
 static void DevicePreClosePMDSpecificActions(DPDKThreadVars *ptv, const char *driver_name)
@@ -218,8 +211,12 @@ static void DevicePreClosePMDSpecificActions(DPDKThreadVars *ptv, const char *dr
         driver_name = BondingDeviceDriverGet(ptv->port_id);
     }
 
-    if (strcmp(driver_name, "net_i40e") == 0) {
+    if (
 #if RTE_VERSION > RTE_VERSION_NUM(20, 0, 0, 0)
+            strcmp(driver_name, "net_i40e") == 0 ||
+#endif /* RTE_VERSION > RTE_VERSION_NUM(20, 0, 0, 0) */
+            strcmp(driver_name, "net_ixgbe") == 0 || strcmp(driver_name, "net_ice") == 0 ||
+            strcmp(driver_name, "mlx5_pci") == 0) {
         // Flush the RSS rules that have been inserted in the post start section
         struct rte_flow_error flush_error = { 0 };
         int32_t retval = rte_flow_flush(ptv->port_id, &flush_error);
@@ -227,7 +224,6 @@ static void DevicePreClosePMDSpecificActions(DPDKThreadVars *ptv, const char *dr
             SCLogError("%s: unable to flush rte_flow rules: %s Flush error msg: %s",
                     ptv->livedev->dev, rte_strerror(-retval), flush_error.message);
         }
-#endif /* RTE_VERSION > RTE_VERSION_NUM(20, 0, 0, 0) */
     }
 }
 
@@ -322,7 +318,7 @@ static void DPDKReleasePacket(Packet *p)
     if ((p->dpdk_v.copy_mode == DPDK_COPY_MODE_TAP ||
                 (p->dpdk_v.copy_mode == DPDK_COPY_MODE_IPS && !PacketCheckAction(p, ACTION_DROP)))
 #if defined(RTE_LIBRTE_I40E_PMD) || defined(RTE_LIBRTE_IXGBE_PMD) || defined(RTE_LIBRTE_ICE_PMD)
-            && !(PKT_IS_ICMPV6(p) && p->icmpv6h->type == 143)
+            && !(PacketIsICMPv6(p) && PacketGetICMPv6(p)->type == 143)
 #endif
     ) {
         BUG_ON(PKT_IS_PSEUDOPKT(p));
@@ -351,114 +347,206 @@ static void DPDKReleasePacket(Packet *p)
     PacketFreeOrRelease(p);
 }
 
+static TmEcode ReceiveDPDKLoopInit(ThreadVars *tv, DPDKThreadVars *ptv)
+{
+    SCEnter();
+    // Indicate that the thread is actually running its application level
+    // code (i.e., it can poll packets)
+    TmThreadsSetFlag(tv, THV_RUNNING);
+    PacketPoolWait();
+
+    rte_eth_stats_reset(ptv->port_id);
+    rte_eth_xstats_reset(ptv->port_id);
+
+    if (ptv->intr_enabled && !InterruptsRXEnable(ptv->port_id, ptv->queue_id))
+        SCReturnInt(TM_ECODE_FAILED);
+
+    SCReturnInt(TM_ECODE_OK);
+}
+
+static inline void LoopHandleTimeoutOnIdle(ThreadVars *tv)
+{
+    static thread_local uint64_t last_timeout_msec = 0;
+    SCTime_t t = TimeGet();
+    uint64_t msecs = SCTIME_MSECS(t);
+    if (msecs > last_timeout_msec + 100) {
+        TmThreadsCaptureHandleTimeout(tv, NULL);
+        last_timeout_msec = msecs;
+    }
+}
+
+/**
+ * \brief Decides if it should retry the packet poll or continue with the packet processing
+ * \return true if the poll should be retried, false otherwise
+ */
+static inline bool RXPacketCountHeuristic(ThreadVars *tv, DPDKThreadVars *ptv, uint16_t nb_rx)
+{
+    static thread_local uint32_t zero_pkt_polls_cnt = 0;
+
+    if (nb_rx > 0) {
+        zero_pkt_polls_cnt = 0;
+        return false;
+    }
+
+    LoopHandleTimeoutOnIdle(tv);
+    if (!ptv->intr_enabled)
+        return true;
+
+    zero_pkt_polls_cnt++;
+    if (zero_pkt_polls_cnt <= MIN_ZERO_POLL_COUNT)
+        return true;
+
+    uint32_t pwd_idle_hint = InterruptsSleepHeuristic(zero_pkt_polls_cnt);
+    if (pwd_idle_hint < STANDARD_SLEEP_TIME_US) {
+        rte_delay_us(pwd_idle_hint);
+    } else {
+        InterruptsTurnOnOff(ptv->port_id, ptv->queue_id, true);
+        struct rte_epoll_event event;
+        rte_epoll_wait(RTE_EPOLL_PER_THREAD, &event, 1, MAX_EPOLL_TIMEOUT_MS);
+        InterruptsTurnOnOff(ptv->port_id, ptv->queue_id, false);
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * \brief Initializes a packet from an mbuf
+ * \return true if the packet was initialized successfully, false otherwise
+ */
+static inline Packet *PacketInitFromMbuf(DPDKThreadVars *ptv, struct rte_mbuf *mbuf)
+{
+    Packet *p = PacketGetFromQueueOrAlloc();
+    if (unlikely(p == NULL)) {
+        return NULL;
+    }
+    PKT_SET_SRC(p, PKT_SRC_WIRE);
+    p->datalink = LINKTYPE_ETHERNET;
+    if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
+        p->flags |= PKT_IGNORE_CHECKSUM;
+    }
+
+    p->ts = TimeGet();
+    p->dpdk_v.mbuf = mbuf;
+    p->ReleasePacket = DPDKReleasePacket;
+    p->dpdk_v.copy_mode = ptv->copy_mode;
+    p->dpdk_v.out_port_id = ptv->out_port_id;
+    p->dpdk_v.out_queue_id = ptv->queue_id;
+    p->livedev = ptv->livedev;
+
+    if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
+        p->flags |= PKT_IGNORE_CHECKSUM;
+    } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_OFFLOAD) {
+        uint64_t ol_flags = p->dpdk_v.mbuf->ol_flags;
+        if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_GOOD &&
+                (ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_GOOD) {
+            SCLogDebug("HW detected GOOD IP and L4 chsum, ignoring validation");
+            p->flags |= PKT_IGNORE_CHECKSUM;
+        } else {
+            if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_BAD) {
+                SCLogDebug("HW detected BAD IP checksum");
+                // chsum recalc will not be triggered but rule keyword check will be
+                p->l3.csum_set = true;
+                p->l3.csum = 0;
+            }
+            if ((ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_BAD) {
+                SCLogDebug("HW detected BAD L4 chsum");
+                p->l4.csum_set = true;
+                p->l4.csum = 0;
+            }
+        }
+    }
+
+    return p;
+}
+
+static inline void DPDKSegmentedMbufWarning(struct rte_mbuf *mbuf)
+{
+    static thread_local bool segmented_mbufs_warned = false;
+    if (!segmented_mbufs_warned && !rte_pktmbuf_is_contiguous(mbuf)) {
+        char warn_s[] = "Segmented mbufs detected! Redmine Ticket #6012 "
+                        "Check your configuration or report the issue";
+        enum rte_proc_type_t eal_t = rte_eal_process_type();
+        if (eal_t == RTE_PROC_SECONDARY) {
+            SCLogWarning("%s. To avoid segmented mbufs, "
+                         "try to increase mbuf size in your primary application",
+                    warn_s);
+        } else if (eal_t == RTE_PROC_PRIMARY) {
+            SCLogWarning("%s. To avoid segmented mbufs, "
+                         "try to increase MTU in your suricata.yaml",
+                    warn_s);
+        }
+
+        segmented_mbufs_warned = true;
+    }
+}
+
+static void HandleShutdown(DPDKThreadVars *ptv)
+{
+    SCLogDebug("Stopping Suricata!");
+    SC_ATOMIC_ADD(ptv->workers_sync->worker_checked_in, 1);
+    while (SC_ATOMIC_GET(ptv->workers_sync->worker_checked_in) < ptv->workers_sync->worker_cnt) {
+        rte_delay_us(10);
+    }
+    if (ptv->queue_id == 0) {
+        rte_delay_us(20); // wait for all threads to get out of the sync loop
+        SC_ATOMIC_SET(ptv->workers_sync->worker_checked_in, 0);
+        // If Suricata runs in peered mode, the peer threads might still want to send
+        // packets to our port. Instead, we know, that we are done with the peered port, so
+        // we stop it. The peered threads will stop our port.
+        if (ptv->copy_mode == DPDK_COPY_MODE_TAP || ptv->copy_mode == DPDK_COPY_MODE_IPS) {
+            rte_eth_dev_stop(ptv->out_port_id);
+        } else {
+            // in IDS we stop our port - no peer threads are running
+            rte_eth_dev_stop(ptv->port_id);
+        }
+    }
+    DPDKDumpCounters(ptv);
+}
+
+static void PeriodicDPDKDumpCounters(DPDKThreadVars *ptv)
+{
+    static thread_local SCTime_t last_dump = { 0 };
+    SCTime_t current_time = TimeGet();
+    /* Trigger one dump of stats every second */
+    if (current_time.secs != last_dump.secs) {
+        DPDKDumpCounters(ptv);
+        last_dump = current_time;
+    }
+}
+
 /**
  *  \brief Main DPDK reading Loop function
  */
 static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
 {
     SCEnter();
-    Packet *p;
-    uint16_t nb_rx;
-    time_t last_dump = 0;
-    time_t current_time;
-    bool segmented_mbufs_warned = 0;
-    SCTime_t t = DPDKSetTimevalReal(&machine_start_time);
-    uint64_t last_timeout_msec = SCTIME_MSECS(t);
-
     DPDKThreadVars *ptv = (DPDKThreadVars *)data;
-    TmSlot *s = (TmSlot *)slot;
-
-    ptv->slot = s->slot_next;
-
-    // Indicate that the thread is actually running its application level code (i.e., it can poll
-    // packets)
-    TmThreadsSetFlag(tv, THV_RUNNING);
-    PacketPoolWait();
-
-    rte_eth_stats_reset(ptv->port_id);
-    rte_eth_xstats_reset(ptv->port_id);
-    while (1) {
+    ptv->slot = ((TmSlot *)slot)->slot_next;
+    TmEcode ret = ReceiveDPDKLoopInit(tv, ptv);
+    if (ret != TM_ECODE_OK) {
+        SCReturnInt(ret);
+    }
+    while (true) {
         if (unlikely(suricata_ctl_flags != 0)) {
-            SCLogDebug("Stopping Suricata!");
-            if (ptv->queue_id == 0) {
-                rte_eth_dev_stop(ptv->port_id);
-                if (ptv->copy_mode == DPDK_COPY_MODE_TAP || ptv->copy_mode == DPDK_COPY_MODE_IPS) {
-                    rte_eth_dev_stop(ptv->out_port_id);
-                }
-            }
-            DPDKDumpCounters(ptv);
+            HandleShutdown(ptv);
             break;
         }
 
-        nb_rx = rte_eth_rx_burst(ptv->port_id, ptv->queue_id, ptv->received_mbufs, BURST_SIZE);
-        if (unlikely(nb_rx == 0)) {
-            t = DPDKSetTimevalReal(&machine_start_time);
-            uint64_t msecs = SCTIME_MSECS(t);
-            if (msecs > last_timeout_msec + 100) {
-                TmThreadsCaptureHandleTimeout(tv, NULL);
-                last_timeout_msec = msecs;
-            }
+        uint16_t nb_rx =
+                rte_eth_rx_burst(ptv->port_id, ptv->queue_id, ptv->received_mbufs, BURST_SIZE);
+        if (RXPacketCountHeuristic(tv, ptv, nb_rx)) {
             continue;
         }
 
         ptv->pkts += (uint64_t)nb_rx;
         for (uint16_t i = 0; i < nb_rx; i++) {
-            p = PacketGetFromQueueOrAlloc();
-            if (unlikely(p == NULL)) {
+            Packet *p = PacketInitFromMbuf(ptv, ptv->received_mbufs[i]);
+            if (p == NULL) {
+                rte_pktmbuf_free(ptv->received_mbufs[i]);
                 continue;
             }
-            PKT_SET_SRC(p, PKT_SRC_WIRE);
-            p->datalink = LINKTYPE_ETHERNET;
-            if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
-                p->flags |= PKT_IGNORE_CHECKSUM;
-            }
-
-            p->ts = DPDKSetTimevalReal(&machine_start_time);
-            p->dpdk_v.mbuf = ptv->received_mbufs[i];
-            p->ReleasePacket = DPDKReleasePacket;
-            p->dpdk_v.copy_mode = ptv->copy_mode;
-            p->dpdk_v.out_port_id = ptv->out_port_id;
-            p->dpdk_v.out_queue_id = ptv->queue_id;
-            p->livedev = ptv->livedev;
-
-            if (ptv->checksum_mode == CHECKSUM_VALIDATION_DISABLE) {
-                p->flags |= PKT_IGNORE_CHECKSUM;
-            } else if (ptv->checksum_mode == CHECKSUM_VALIDATION_OFFLOAD) {
-                uint64_t ol_flags = ptv->received_mbufs[i]->ol_flags;
-                if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_GOOD &&
-                        (ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_GOOD) {
-                    SCLogDebug("HW detected GOOD IP and L4 chsum, ignoring validation");
-                    p->flags |= PKT_IGNORE_CHECKSUM;
-                } else {
-                    if ((ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) == RTE_MBUF_F_RX_IP_CKSUM_BAD) {
-                        SCLogDebug("HW detected BAD IP checksum");
-                        // chsum recalc will not be triggered but rule keyword check will be
-                        p->level3_comp_csum = 0;
-                    }
-                    if ((ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK) == RTE_MBUF_F_RX_L4_CKSUM_BAD) {
-                        SCLogDebug("HW detected BAD L4 chsum");
-                        p->level4_comp_csum = 0;
-                    }
-                }
-            }
-
-            if (!rte_pktmbuf_is_contiguous(p->dpdk_v.mbuf) && !segmented_mbufs_warned) {
-                char warn_s[] = "Segmented mbufs detected! Redmine Ticket #6012 "
-                                "Check your configuration or report the issue";
-                enum rte_proc_type_t eal_t = rte_eal_process_type();
-                if (eal_t == RTE_PROC_SECONDARY) {
-                    SCLogWarning("%s. To avoid segmented mbufs, "
-                                 "try to increase mbuf size in your primary application",
-                            warn_s);
-                } else if (eal_t == RTE_PROC_PRIMARY) {
-                    SCLogWarning("%s. To avoid segmented mbufs, "
-                                 "try to increase MTU in your suricata.yaml",
-                            warn_s);
-                }
-
-                segmented_mbufs_warned = 1;
-            }
-
+            DPDKSegmentedMbufWarning(ptv->received_mbufs[i]);
             PacketSetData(p, rte_pktmbuf_mtod(p->dpdk_v.mbuf, uint8_t *),
                     rte_pktmbuf_pkt_len(p->dpdk_v.mbuf));
             if (TmThreadsSlotProcessPkt(ptv->tv, ptv->slot, p) != TM_ECODE_OK) {
@@ -468,12 +556,7 @@ static TmEcode ReceiveDPDKLoop(ThreadVars *tv, void *data, void *slot)
             }
         }
 
-        /* Trigger one dump of stats every second */
-        current_time = DPDKGetSeconds();
-        if (current_time != last_dump) {
-            DPDKDumpCounters(ptv);
-            last_dump = current_time;
-        }
+        PeriodicDPDKDumpCounters(ptv);
         StatsSyncCountersIfSignalled(tv);
     }
 
@@ -522,6 +605,7 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
     ptv->checksum_mode = dpdk_config->checksum_mode;
 
     ptv->threads = dpdk_config->threads;
+    ptv->intr_enabled = (dpdk_config->flags & DPDK_IRQ_MODE) ? true : false;
     ptv->port_id = dpdk_config->port_id;
     ptv->out_port_id = dpdk_config->out_port_id;
     ptv->port_socket_id = dpdk_config->socket_id;
@@ -532,11 +616,12 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
     thread_numa = GetNumaNode();
     if (thread_numa >= 0 && ptv->port_socket_id != SOCKET_ID_ANY &&
             thread_numa != ptv->port_socket_id) {
-        SC_ATOMIC_ADD(dpdk_config->inconsitent_numa_cnt, 1);
+        SC_ATOMIC_ADD(dpdk_config->inconsistent_numa_cnt, 1);
         SCLogPerf("%s: NIC is on NUMA %d, thread on NUMA %d", dpdk_config->iface,
                 ptv->port_socket_id, thread_numa);
     }
 
+    ptv->workers_sync = dpdk_config->workers_sync;
     uint16_t queue_id = SC_ATOMIC_ADD(dpdk_config->queue_id, 1);
     ptv->queue_id = queue_id;
 
@@ -560,14 +645,17 @@ static TmEcode ReceiveDPDKThreadInit(ThreadVars *tv, const void *initdata, void 
         // some PMDs requires additional actions only after the device has started
         DevicePostStartPMDSpecificActions(ptv, dev_info.driver_name);
 
-        uint16_t inconsistent_numa_cnt = SC_ATOMIC_GET(dpdk_config->inconsitent_numa_cnt);
+        uint16_t inconsistent_numa_cnt = SC_ATOMIC_GET(dpdk_config->inconsistent_numa_cnt);
         if (inconsistent_numa_cnt > 0 && ptv->port_socket_id != SOCKET_ID_ANY) {
             SCLogWarning("%s: NIC is on NUMA %d, %u threads on different NUMA node(s)",
                     dpdk_config->iface, ptv->port_socket_id, inconsistent_numa_cnt);
-        } else if (ptv->port_socket_id == SOCKET_ID_ANY) {
+        } else if (ptv->port_socket_id == SOCKET_ID_ANY && rte_socket_count() > 1) {
             SCLogNotice(
                     "%s: unable to determine NIC's NUMA node, degraded performance can be expected",
                     dpdk_config->iface);
+        }
+        if (ptv->intr_enabled) {
+            rte_spinlock_init(&intr_lock[ptv->port_id]);
         }
     }
 
@@ -677,6 +765,10 @@ static TmEcode ReceiveDPDKThreadDeinit(ThreadVars *tv, void *data)
         }
 
         DevicePreClosePMDSpecificActions(ptv, dev_info.driver_name);
+
+        if (ptv->workers_sync) {
+            SCFree(ptv->workers_sync);
+        }
     }
 
     ptv->pkt_mempool = NULL; // MP is released when device is closed

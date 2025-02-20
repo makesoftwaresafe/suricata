@@ -23,8 +23,8 @@
  * Common includes, etc.
  */
 
-#ifndef __SURICATA_COMMON_H__
-#define __SURICATA_COMMON_H__
+#ifndef SURICATA_SURICATA_COMMON_H
+#define SURICATA_SURICATA_COMMON_H
 
 #ifdef DEBUG
 #define DBG_PERF
@@ -47,8 +47,13 @@
 #define SC_ADDRESS_SANITIZER 1
 #endif
 
-#if HAVE_CONFIG_H
-#include <autoconf.h>
+#include "autoconf.h"
+
+#ifndef REVISION
+#define REVISION "undefined"
+#endif
+#ifndef __SCFILENAME__
+#define __SCFILENAME__ "undefined"
 #endif
 
 #ifndef CLS
@@ -285,6 +290,10 @@ typedef unsigned char u_char;
 #include <math.h>
 #endif
 
+#ifdef HAVE_MM_MALLOC_H
+#include <mm_malloc.h>
+#endif
+
 /* we need this to stringify the defines which are supplied at compiletime see:
    http://gcc.gnu.org/onlinedocs/gcc-3.4.1/cpp/Stringification.html#Stringification */
 #define xstr(s) str(s)
@@ -397,7 +406,7 @@ typedef unsigned char u_char;
 
 #define BIT_U8(n)  ((uint8_t)(1 << (n)))
 #define BIT_U16(n) ((uint16_t)(1 << (n)))
-#define BIT_U32(n) (1UL  << (n))
+#define BIT_U32(n) ((uint32_t)(1UL << (n)))
 #define BIT_U64(n) (1ULL << (n))
 
 #define WARN_UNUSED __attribute__((warn_unused_result))
@@ -463,6 +472,7 @@ typedef enum {
     /* TX loggers first for low logger IDs */
     LOGGER_HTTP,
     LOGGER_TLS_STORE,
+    LOGGER_TLS_STORE_CLIENT,
     LOGGER_TLS,
     LOGGER_JSON_TX,
     LOGGER_FILE,
@@ -490,22 +500,19 @@ typedef enum {
     LOGGER_JSON_METADATA,
     LOGGER_JSON_FRAME,
     LOGGER_JSON_STREAM,
+    LOGGER_JSON_ARP,
+
+    /* An ID that can be used by loggers registered by plugins and/or
+     * library users. */
+    LOGGER_USER,
+
+    /* Must come last. */
     LOGGER_SIZE,
 } LoggerId;
 
-#ifndef HAVE_LUA
-
 /* If we don't have Lua, create a typedef for lua_State so the
  * exported Lua functions don't fail the build. */
-typedef void lua_State;
-
-#else
-
-#include <lua.h>
-#include <lualib.h>
-#include <lauxlib.h>
-
-#endif
+typedef struct lua_State lua_State;
 
 #include "tm-threads-common.h"
 #include "util-optimize.h"
@@ -546,4 +553,4 @@ extern int g_ut_covered;
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 
-#endif /* __SURICATA_COMMON_H__ */
+#endif /* SURICATA_SURICATA_COMMON_H */

@@ -23,9 +23,13 @@ use std::collections::HashMap;
 use std::ffi::CString;
 
 use nom7::{Err, Needed};
+use suricata_sys::sys::AppProto;
 
 use crate::applayer;
 use crate::applayer::*;
+use crate::direction::Direction;
+use crate::direction::DIR_BOTH;
+use crate::flow::Flow;
 use crate::frames::*;
 use crate::core::*;
 use crate::conf::*;
@@ -159,7 +163,7 @@ impl NFSTransactionFile {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_nfs_gettxfiles(_state: *mut std::ffi::c_void, tx: *mut std::ffi::c_void, direction: u8) -> AppLayerGetFileState {
+pub unsafe extern "C" fn rs_nfs_gettxfiles(tx: *mut std::ffi::c_void, direction: u8) -> AppLayerGetFileState {
     let tx = cast_pointer!(tx, NFSTransaction);
     if let Some(NFSTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
         let tx_dir : u8 = tdf.direction.into();
@@ -431,6 +435,8 @@ impl NFSState {
             // set at least one another transaction to the drop state
             for tx_old in &mut self.transactions {
                 if !tx_old.request_done || !tx_old.response_done {
+                    tx_old.tx_data.updated_tc = true;
+                    tx_old.tx_data.updated_ts = true;
                     tx_old.request_done = true;
                     tx_old.response_done = true;
                     tx_old.is_file_closed = true;
@@ -462,27 +468,11 @@ impl NFSState {
     }
 
     pub fn get_tx_by_id(&mut self, tx_id: u64) -> Option<&NFSTransaction> {
-        SCLogDebug!("get_tx_by_id: tx_id={}", tx_id);
-        for tx in &mut self.transactions {
-            if tx.id == tx_id + 1 {
-                SCLogDebug!("Found NFS TX with ID {}", tx_id);
-                return Some(tx);
-            }
-        }
-        SCLogDebug!("Failed to find NFS TX with ID {}", tx_id);
-        return None;
+        return self.transactions.iter().find(|&tx| tx.id == tx_id + 1);
     }
 
     pub fn get_tx_by_xid(&mut self, tx_xid: u32) -> Option<&mut NFSTransaction> {
-        SCLogDebug!("get_tx_by_xid: tx_xid={}", tx_xid);
-        for tx in &mut self.transactions {
-            if !tx.is_file_tx && tx.xid == tx_xid {
-                SCLogDebug!("Found NFS TX with ID {} XID {:04X}", tx.id, tx.xid);
-                return Some(tx);
-            }
-        }
-        SCLogDebug!("Failed to find NFS TX with XID {:04X}", tx_xid);
-        return None;
+        return self.transactions.iter_mut().find(|tx| !tx.is_file_tx && tx.xid == tx_xid);
     }
 
     /// Set an event. The event is set on the most recent transaction.
@@ -497,9 +487,11 @@ impl NFSState {
     }
 
     // TODO maybe not enough users to justify a func
-    pub fn mark_response_tx_done(&mut self, xid: u32, rpc_status: u32, nfs_status: u32, resp_handle: &Vec<u8>)
+    pub fn mark_response_tx_done(&mut self, xid: u32, rpc_status: u32, nfs_status: u32, resp_handle: &[u8])
     {
         if let Some(mytx) = self.get_tx_by_xid(xid) {
+            mytx.tx_data.updated_tc = true;
+            mytx.tx_data.updated_ts = true;
             mytx.response_done = true;
             mytx.rpc_response_status = rpc_status;
             mytx.nfs_response_status = nfs_status;
@@ -515,68 +507,68 @@ impl NFSState {
     }
 
     fn add_rpc_udp_ts_pdu(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_len: i64) -> Option<Frame> {
-        let rpc_udp_ts_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8);
+        let rpc_udp_ts_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8, None);
         SCLogDebug!("rpc_udp_pdu ts frame {:?}", rpc_udp_ts_pdu);
         rpc_udp_ts_pdu
     }
 
     fn add_rpc_udp_ts_creds(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], creds_len: i64) {
-        let _rpc_udp_ts_creds = Frame::new(flow, stream_slice, input, creds_len, NFSFrameType::RPCCreds as u8);
+        let _rpc_udp_ts_creds = Frame::new(flow, stream_slice, input, creds_len, NFSFrameType::RPCCreds as u8, None);
         SCLogDebug!("rpc_creds ts frame {:?}", _rpc_udp_ts_creds);
     }
 
     fn add_rpc_tcp_ts_pdu(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_len: i64) -> Option<Frame> {
-        let rpc_tcp_ts_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8);
+        let rpc_tcp_ts_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8, None);
         SCLogDebug!("rpc_tcp_pdu ts frame {:?}", rpc_tcp_ts_pdu);
         rpc_tcp_ts_pdu
     }
 
     fn add_rpc_tcp_ts_creds(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], creds_len: i64) {
-        let _rpc_tcp_ts_creds = Frame::new(flow, stream_slice, input, creds_len, NFSFrameType::RPCCreds as u8);
+        let _rpc_tcp_ts_creds = Frame::new(flow, stream_slice, input, creds_len, NFSFrameType::RPCCreds as u8, None);
         SCLogDebug!("rpc_tcp_ts_creds {:?}", _rpc_tcp_ts_creds);
     }
 
     fn add_nfs_ts_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nfs_len: i64) {
-        let _nfs_req_pdu = Frame::new(flow, stream_slice, input, nfs_len, NFSFrameType::NFSPdu as u8);
+        let _nfs_req_pdu = Frame::new(flow, stream_slice, input, nfs_len, NFSFrameType::NFSPdu as u8, None);
         SCLogDebug!("nfs_ts_pdu Frame {:?}", _nfs_req_pdu);
     }
 
     fn add_nfs4_ts_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nfs4_len: i64) {
-        let _nfs4_ts_pdu = Frame::new(flow, stream_slice, input, nfs4_len, NFSFrameType::NFS4Pdu as u8);
+        let _nfs4_ts_pdu = Frame::new(flow, stream_slice, input, nfs4_len, NFSFrameType::NFS4Pdu as u8, None);
         SCLogDebug!("nfs4_ts_pdu Frame: {:?}", _nfs4_ts_pdu);
         if nfs4_len > 8 {
-            let _nfs4_ts_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::NFS4Hdr as u8);
+            let _nfs4_ts_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::NFS4Hdr as u8, None);
             SCLogDebug!("nfs4_ts_hdr Frame {:?}", _nfs4_ts_hdr);
-            let _nfs4_ts_ops = Frame::new(flow, stream_slice, &input[8..], nfs4_len - 8, NFSFrameType::NFS4Ops as u8);
+            let _nfs4_ts_ops = Frame::new(flow, stream_slice, &input[8..], nfs4_len - 8, NFSFrameType::NFS4Ops as u8, None);
             SCLogDebug!("nfs4_ts_ops Frame {:?}", _nfs4_ts_ops);
         }
     }
 
     fn add_rpc_udp_tc_pdu(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_len: i64) -> Option<Frame> {
-        let rpc_udp_tc_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8);
+        let rpc_udp_tc_pdu = Frame::new(flow, stream_slice, input, rpc_len, NFSFrameType::RPCPdu as u8, None);
         SCLogDebug!("rpc_tc_pdu frame {:?}", rpc_udp_tc_pdu);
         rpc_udp_tc_pdu
     }
 
     fn add_rpc_udp_tc_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_len: i64) {
         if rpc_len > 8 {
-            let _rpc_udp_tc_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::RPCHdr as u8);
-            let _rpc_udp_tc_data = Frame::new(flow, stream_slice, &input[8..], rpc_len - 8, NFSFrameType::RPCData as u8);
+            let _rpc_udp_tc_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::RPCHdr as u8, None);
+            let _rpc_udp_tc_data = Frame::new(flow, stream_slice, &input[8..], rpc_len - 8, NFSFrameType::RPCData as u8, None);
             SCLogDebug!("rpc_udp_tc_hdr frame {:?}", _rpc_udp_tc_hdr);
             SCLogDebug!("rpc_udp_tc_data frame {:?}", _rpc_udp_tc_data);
         }
     }
 
     fn add_rpc_tcp_tc_pdu(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_tcp_len: i64) -> Option<Frame> {
-        let rpc_tcp_tc_pdu = Frame::new(flow, stream_slice, input, rpc_tcp_len, NFSFrameType::RPCPdu as u8);
+        let rpc_tcp_tc_pdu = Frame::new(flow, stream_slice, input, rpc_tcp_len, NFSFrameType::RPCPdu as u8, None);
         SCLogDebug!("rpc_tcp_pdu tc frame {:?}", rpc_tcp_tc_pdu);
         rpc_tcp_tc_pdu
     }
 
     fn add_rpc_tcp_tc_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], rpc_tcp_len: i64) {
         if rpc_tcp_len > 12 {
-            let _rpc_tcp_tc_hdr = Frame::new(flow, stream_slice, input, 12, NFSFrameType::RPCHdr as u8);
-            let _rpc_tcp_tc_data = Frame::new(flow, stream_slice, &input[12..], rpc_tcp_len - 12, NFSFrameType::RPCData as u8);
+            let _rpc_tcp_tc_hdr = Frame::new(flow, stream_slice, input, 12, NFSFrameType::RPCHdr as u8, None);
+            let _rpc_tcp_tc_data = Frame::new(flow, stream_slice, &input[12..], rpc_tcp_len - 12, NFSFrameType::RPCData as u8, None);
             SCLogDebug!("rpc_tcp_tc_hdr frame {:?}", _rpc_tcp_tc_hdr);
             SCLogDebug!("rpc_tcp_tc_data frame {:?}", _rpc_tcp_tc_data);
         }
@@ -584,24 +576,24 @@ impl NFSState {
 
     fn add_nfs_tc_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nfs_len: i64) {
         if nfs_len > 0 {
-            let _nfs_tc_pdu = Frame::new(flow, stream_slice, input, nfs_len, NFSFrameType::NFSPdu as u8);
+            let _nfs_tc_pdu = Frame::new(flow, stream_slice, input, nfs_len, NFSFrameType::NFSPdu as u8, None);
             SCLogDebug!("nfs_tc_pdu frame {:?}", _nfs_tc_pdu);
-            let _nfs_res_status = Frame::new(flow, stream_slice, input, 4, NFSFrameType::NFSStatus as u8);
+            let _nfs_res_status = Frame::new(flow, stream_slice, input, 4, NFSFrameType::NFSStatus as u8, None);
             SCLogDebug!("nfs_tc_status frame {:?}", _nfs_res_status);
         }
     }
 
     fn add_nfs4_tc_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nfs4_len: i64) {
         if nfs4_len > 0 {
-            let _nfs4_tc_pdu = Frame::new(flow, stream_slice, input, nfs4_len, NFSFrameType::NFS4Pdu as u8);
+            let _nfs4_tc_pdu = Frame::new(flow, stream_slice, input, nfs4_len, NFSFrameType::NFS4Pdu as u8, None);
             SCLogDebug!("nfs4_tc_pdu frame {:?}", _nfs4_tc_pdu);
-            let _nfs4_tc_status = Frame::new(flow, stream_slice, input, 4, NFSFrameType::NFS4Status as u8);
+            let _nfs4_tc_status = Frame::new(flow, stream_slice, input, 4, NFSFrameType::NFS4Status as u8, None);
             SCLogDebug!("nfs4_tc_status frame {:?}", _nfs4_tc_status);
         }
         if nfs4_len > 8 {
-            let _nfs4_tc_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::NFS4Hdr as u8);
+            let _nfs4_tc_hdr = Frame::new(flow, stream_slice, input, 8, NFSFrameType::NFS4Hdr as u8, None);
             SCLogDebug!("nfs4_tc_hdr frame {:?}", _nfs4_tc_hdr);
-            let _nfs4_tc_ops = Frame::new(flow, stream_slice, &input[8..], nfs4_len - 8, NFSFrameType::NFS4Ops as u8);
+            let _nfs4_tc_ops = Frame::new(flow, stream_slice, &input[8..], nfs4_len - 8, NFSFrameType::NFS4Ops as u8, None);
             SCLogDebug!("nfs4_tc_ops frame {:?}", _nfs4_tc_ops);
         }
     }
@@ -685,15 +677,11 @@ impl NFSState {
     }
 
     pub fn xidmap_handle2name(&mut self, xidmap: &mut NFSRequestXidMap) {
-        match self.namemap.get(&xidmap.file_handle) {
-            Some(n) => {
-                SCLogDebug!("xidmap_handle2name: name {:?}", n);
-                xidmap.file_name = n.to_vec();
-            },
-            _ => {
-                SCLogDebug!("xidmap_handle2name: object {:?} not found",
-                        xidmap.file_handle);
-            },
+        if let Some(n) = self.namemap.get(&xidmap.file_handle) {
+            SCLogDebug!("xidmap_handle2name: name {:?}", n);
+            xidmap.file_name = n.to_vec();
+        } else {
+            SCLogDebug!("xidmap_handle2name: object {:?} not found", xidmap.file_handle);
         }
     }
 
@@ -756,6 +744,8 @@ impl NFSState {
                     tx.tx_data.update_file_flags(self.state_data.file_flags);
                     d.update_file_flags(tx.tx_data.file_flags);
                     SCLogDebug!("Found NFS file TX with ID {} XID {:04X}", tx.id, tx.xid);
+                    tx.tx_data.updated_tc = true;
+                    tx.tx_data.updated_ts = true;
                     return Some(tx);
                 }
             }
@@ -1881,6 +1871,9 @@ pub unsafe extern "C" fn rs_nfs_probe_ms(
         direction: u8, input: *const u8,
         len: u32, rdir: *mut u8) -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice: &[u8] = build_slice!(input, len as usize);
     SCLogDebug!("rs_nfs_probe_ms: probing direction {:02x}", direction);
     let mut adirection : u8 = 0;
@@ -1920,6 +1913,9 @@ pub unsafe extern "C" fn rs_nfs_probe(_f: *const Flow,
                                _rdir: *mut u8)
     -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice: &[u8] = build_slice!(input, len as usize);
     SCLogDebug!("rs_nfs_probe: running probe");
     match nfs_probe(slice, direction.into()) {
@@ -1938,6 +1934,9 @@ pub unsafe extern "C" fn rs_nfs_probe_udp_ts(_f: *const Flow,
                                _rdir: *mut u8)
     -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice: &[u8] = build_slice!(input, len as usize);
     match nfs_probe_udp(slice, Direction::ToServer) {
         1 => { ALPROTO_NFS },
@@ -1955,6 +1954,9 @@ pub unsafe extern "C" fn rs_nfs_probe_udp_tc(_f: *const Flow,
                                _rdir: *mut u8)
     -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice: &[u8] = build_slice!(input, len as usize);
     match nfs_probe_udp(slice, Direction::ToClient) {
         1 => { ALPROTO_NFS },
@@ -1997,7 +1999,6 @@ pub unsafe extern "C" fn rs_nfs_register_parser() {
         get_state_data: rs_nfs_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
-        truncate: None,
         get_frame_id_by_name: Some(NFSFrameType::ffi_id_from_name),
         get_frame_name_by_id: Some(NFSFrameType::ffi_name_from_id),
     };
@@ -2075,7 +2076,6 @@ pub unsafe extern "C" fn rs_nfs_udp_register_parser() {
         get_state_data: rs_nfs_get_state_data,
         apply_tx_config: None,
         flags: 0,
-        truncate: None,
         get_frame_id_by_name: Some(NFSFrameType::ffi_id_from_name),
         get_frame_name_by_id: Some(NFSFrameType::ffi_name_from_id),
     };

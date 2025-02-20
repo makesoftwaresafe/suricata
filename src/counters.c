@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2021 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -155,7 +155,6 @@ void StatsAddUI64(ThreadVars *tv, uint16_t id, uint64_t x)
 #endif
     pca->head[id].value += x;
     pca->head[id].updates++;
-    return;
 }
 
 /**
@@ -176,7 +175,6 @@ void StatsIncr(ThreadVars *tv, uint16_t id)
 #endif
     pca->head[id].value++;
     pca->head[id].updates++;
-    return;
 }
 
 /**
@@ -197,7 +195,6 @@ void StatsDecr(ThreadVars *tv, uint16_t id)
 #endif
     pca->head[id].value--;
     pca->head[id].updates++;
-    return;
 }
 
 /**
@@ -225,8 +222,6 @@ void StatsSetUI64(ThreadVars *tv, uint16_t id, uint64_t x)
     }
 
     pca->head[id].updates++;
-
-    return;
 }
 
 static ConfNode *GetConfig(void) {
@@ -370,8 +365,6 @@ static void StatsReleaseCtx(void)
     }
     memset(&stats_table, 0, sizeof(stats_table));
     SCMutexUnlock(&stats_table_mutex);
-
-    return;
 }
 
 /**
@@ -413,13 +406,8 @@ static void *StatsMgmtThread(void *arg)
     SCLogDebug("stats_thread_data %p", &stats_thread_data);
 
     TmThreadsSetFlag(tv_local, THV_INIT_DONE | THV_RUNNING);
-    while (1) {
-        if (TmThreadsCheckFlag(tv_local, THV_PAUSE)) {
-            TmThreadsSetFlag(tv_local, THV_PAUSED);
-            TmThreadTestThreadUnPaused(tv_local);
-            TmThreadsUnsetFlag(tv_local, THV_PAUSED);
-        }
-
+    bool run = TmThreadsWaitForUnpause(tv_local);
+    while (run) {
         struct timeval cur_timev;
         gettimeofday(&cur_timev, NULL);
         struct timespec cond_time = FROM_TIMEVAL(cur_timev);
@@ -460,7 +448,7 @@ void StatsSyncCounters(ThreadVars *tv)
 
 void StatsSyncCountersIfSignalled(ThreadVars *tv)
 {
-    if (SC_ATOMIC_GET(tv->perf_public_ctx.sync_now) == true) {
+    if (SC_ATOMIC_GET(tv->perf_public_ctx.sync_now)) {
         StatsUpdateCounterArray(&tv->perf_private_ctx, &tv->perf_public_ctx);
     }
 }
@@ -494,14 +482,9 @@ static void *StatsWakeupThread(void *arg)
     }
 
     TmThreadsSetFlag(tv_local, THV_INIT_DONE | THV_RUNNING);
+    bool run = TmThreadsWaitForUnpause(tv_local);
 
-    while (1) {
-        if (TmThreadsCheckFlag(tv_local, THV_PAUSE)) {
-            TmThreadsSetFlag(tv_local, THV_PAUSED);
-            TmThreadTestThreadUnPaused(tv_local);
-            TmThreadsUnsetFlag(tv_local, THV_PAUSED);
-        }
-
+    while (run) {
         struct timeval cur_timev;
         gettimeofday(&cur_timev, NULL);
         struct timespec cond_time = FROM_TIMEVAL(cur_timev);
@@ -568,8 +551,6 @@ static void StatsReleaseCounter(StatsCounter *pc)
     if (pc != NULL) {
         SCFree(pc);
     }
-
-    return;
 }
 
 /**
@@ -653,7 +634,6 @@ static void StatsCopyCounterValue(StatsLocalCounter *pcae)
 
     pc->value = pcae->value;
     pc->updates = pcae->updates;
-    return;
 }
 
 /**
@@ -1050,9 +1030,9 @@ static uint32_t CountersIdHashFunc(HashTable *ht, void *data, uint16_t datalen)
 {
     CountersIdType *t = (CountersIdType *)data;
     uint32_t hash = 0;
-    int len = strlen(t->string);
+    size_t len = strlen(t->string);
 
-    for (int i = 0; i < len; i++)
+    for (size_t i = 0; i < len; i++)
         hash += u8_tolower((unsigned char)t->string[i]);
 
     hash = hash % ht->array_size;
@@ -1064,8 +1044,8 @@ static char CountersIdHashCompareFunc(void *data1, uint16_t datalen1,
 {
     CountersIdType *t1 = (CountersIdType *)data1;
     CountersIdType *t2 = (CountersIdType *)data2;
-    int len1 = 0;
-    int len2 = 0;
+    size_t len1 = 0;
+    size_t len2 = 0;
 
     if (t1 == NULL || t2 == NULL)
         return 0;

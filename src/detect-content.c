@@ -330,7 +330,7 @@ int DetectContentSetup(DetectEngineCtx *de_ctx, Signature *s, const char *conten
     DetectContentData *cd = DetectContentParse(de_ctx->spm_global_thread_ctx, contentstr);
     if (cd == NULL)
         goto error;
-    if (s->init_data->negated == true) {
+    if (s->init_data->negated) {
         cd->flags |= DETECT_CONTENT_NEGATED;
     }
 
@@ -556,7 +556,7 @@ static void PropagateLimits(Signature *s, SigMatch *sm_head)
                 SCLogDebug("stored: offset %u depth %u offset_plus_pat %u", offset, depth,
                         offset_plus_pat);
 
-                if ((cd->flags & (DETECT_DEPTH | DETECT_CONTENT_WITHIN)) == 0) {
+                if ((cd->flags & (DETECT_CONTENT_DEPTH | DETECT_CONTENT_WITHIN)) == 0) {
                     if (depth)
                         SCLogDebug("no within, reset depth");
                     depth = 0;
@@ -824,7 +824,7 @@ static bool TestLastContent(const Signature *s, uint16_t o, uint16_t d)
         FAIL_IF_NULL(s);                                                                           \
         SigPrepareStage1(de_ctx);                                                                  \
         bool res = TestLastContent(s, (o), (d));                                                   \
-        FAIL_IF(res == false);                                                                     \
+        FAIL_IF_NOT(res);                                                                          \
         DetectEngineCtxFree(de_ctx);                                                               \
     }
 
@@ -1504,7 +1504,7 @@ static int DetectContentParseTest19(void)
     FAIL_IF_NOT(s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL);
 
     DetectContentData *data = (DetectContentData *)sm->ctx;
-    FAIL_IF_NOT(data->flags == DETECT_CONTENT_DISTANCE);
+    FAIL_IF_NOT(data->flags == (DETECT_CONTENT_DISTANCE | DETECT_CONTENT_MPM));
 
     s = DetectEngineAppendSig(de_ctx,
             "alert tcp any any -> any any "

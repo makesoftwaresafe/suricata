@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_MPM_H__
-#define __UTIL_MPM_H__
+#ifndef SURICATA_UTIL_MPM_H
+#define SURICATA_UTIL_MPM_H
 
 #include "app-layer-protos.h"
 #include "util-prefilter.h"
@@ -124,7 +124,6 @@ typedef struct MpmCtxFactoryItem {
 
 typedef struct MpmCtxFactoryContainer_ {
     MpmCtxFactoryItem *items;
-    int32_t no_of_items;
     int32_t max_id;
 } MpmCtxFactoryContainer;
 
@@ -137,6 +136,11 @@ typedef struct MpmCtxFactoryContainer_ {
 /** the ctx uses it's own internal id instead of
  *  what is passed through the API */
 #define MPM_PATTERN_CTX_OWNS_ID     0x20
+#define MPM_PATTERN_FLAG_ENDSWITH   0x40
+
+#define MPM_FEATURE_FLAG_DEPTH    BIT_U8(0)
+#define MPM_FEATURE_FLAG_OFFSET   BIT_U8(1)
+#define MPM_FEATURE_FLAG_ENDSWITH BIT_U8(2)
 
 typedef struct MpmTableElmt_ {
     const char *name;
@@ -166,6 +170,7 @@ typedef struct MpmTableElmt_ {
 #ifdef UNITTESTS
     void (*RegisterUnittests)(void);
 #endif
+    uint8_t feature_flags;
 } MpmTableElmt;
 
 extern MpmTableElmt mpm_table[MPM_TABLE_SIZE];
@@ -200,4 +205,4 @@ int MpmAddPattern(MpmCtx *mpm_ctx, uint8_t *pat, uint16_t patlen,
                             uint16_t offset, uint16_t depth, uint32_t pid,
                             SigIntId sid, uint8_t flags);
 
-#endif /* __UTIL_MPM_H__ */
+#endif /* SURICATA_UTIL_MPM_H */

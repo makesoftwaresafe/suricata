@@ -228,11 +228,16 @@ static int DetectMarkPacket(DetectEngineThreadCtx *det_ctx, Packet *p,
 #ifdef NFQ
     const DetectMarkData *nf_data = (const DetectMarkData *)ctx;
     if (nf_data->mask) {
-        if (!(IS_TUNNEL_PKT(p))) {
+        if (PacketIsNotTunnel(p)) {
+            /* for a non-tunnel packet we don't need a lock,
+             * and if we're here we can't turn into a tunnel
+             * packet anymore. */
+
             /* coverity[missing_lock] */
             p->nfq_v.mark = (nf_data->mark & nf_data->mask)
                 | (p->nfq_v.mark & ~(nf_data->mask));
-            p->flags |= PKT_MARK_MODIFIED;
+            /* coverity[missing_lock] */
+            p->nfq_v.mark_modified = true;
         } else {
             /* real tunnels may have multiple flows inside them, so marking
              * might 'mark' too much. Rebuilt packets from IP fragments
@@ -242,7 +247,7 @@ static int DetectMarkPacket(DetectEngineThreadCtx *det_ctx, Packet *p,
                 SCSpinLock(&tp->persistent.tunnel_lock);
                 tp->nfq_v.mark = (nf_data->mark & nf_data->mask)
                     | (tp->nfq_v.mark & ~(nf_data->mask));
-                tp->flags |= PKT_MARK_MODIFIED;
+                tp->nfq_v.mark_modified = true;
                 SCSpinUnlock(&tp->persistent.tunnel_lock);
             }
         }

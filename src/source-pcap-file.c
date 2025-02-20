@@ -31,8 +31,10 @@
 #include "util-checksum.h"
 #include "runmode-unix-socket.h"
 #include "suricata.h"
+#include "conf.h"
+#include "util-misc.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 PcapFileGlobalVars pcap_g;
 
 /**
@@ -135,10 +137,35 @@ void TmModuleDecodePcapFileRegister (void)
     tmm_modules[TMM_DECODEPCAPFILE].flags = TM_FLAG_DECODE_TM;
 }
 
+#if defined(HAVE_SETVBUF) && defined(OS_LINUX)
+#define PCAP_FILE_BUFFER_SIZE_DEFAULT 131072U   // 128 KiB
+#define PCAP_FILE_BUFFER_SIZE_MIN     4096U     // 4 KiB
+#define PCAP_FILE_BUFFER_SIZE_MAX     67108864U // 64MiB
+#endif
+
 void PcapFileGlobalInit(void)
 {
     memset(&pcap_g, 0x00, sizeof(pcap_g));
     SC_ATOMIC_INIT(pcap_g.invalid_checksums);
+
+#if defined(HAVE_SETVBUF) && defined(OS_LINUX)
+    pcap_g.read_buffer_size = PCAP_FILE_BUFFER_SIZE_DEFAULT;
+
+    const char *str = NULL;
+    if (ConfGet("pcap-file.buffer-size", &str) == 1) {
+        uint32_t value = 0;
+        if (ParseSizeStringU32(str, &value) < 0) {
+            SCLogWarning("failed to parse pcap-file.buffer-size %s", str);
+        }
+        if (value >= PCAP_FILE_BUFFER_SIZE_MIN && value <= PCAP_FILE_BUFFER_SIZE_MAX) {
+            SCLogInfo("Pcap-file will use %u buffer size", value);
+            pcap_g.read_buffer_size = value;
+        } else {
+            SCLogWarning("pcap-file.buffer-size value of %u is invalid. Valid range is %u-%u",
+                    value, PCAP_FILE_BUFFER_SIZE_MIN, PCAP_FILE_BUFFER_SIZE_MAX);
+        }
+    }
+#endif
 }
 
 TmEcode PcapFileExit(TmEcode status, struct timespec *last_processed)
@@ -249,7 +276,8 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
 
     if(directory == NULL) {
         SCLogDebug("argument %s was a file", (char *)initdata);
-        PcapFileFileVars *pv = SCCalloc(1, sizeof(PcapFileFileVars));
+        const size_t toalloc = sizeof(PcapFileFileVars) + pcap_g.read_buffer_size;
+        PcapFileFileVars *pv = SCCalloc(1, toalloc);
         if (unlikely(pv == NULL)) {
             SCLogError("Failed to allocate file vars");
             CleanupPcapFileThreadVars(ptv);
@@ -293,7 +321,6 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
             CleanupPcapFileThreadVars(ptv);
             SCReturnInt(TM_ECODE_OK);
         }
-        pv->cur_dir_depth = 0;
 
         int should_recurse;
         pv->should_recurse = false;
@@ -307,7 +334,7 @@ TmEcode ReceivePcapFileThreadInit(ThreadVars *tv, const void *initdata, void **d
             pv->should_loop = (should_loop == 1);
         }
 
-        if (pv->should_recurse == true && pv->should_loop == true) {
+        if (pv->should_recurse && pv->should_loop) {
             SCLogError("Error, --pcap-file-continuous and --pcap-file-recursive "
                        "cannot be used together.");
             closedir(directory);

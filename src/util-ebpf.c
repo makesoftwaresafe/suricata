@@ -30,7 +30,6 @@
  *
  */
 
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #define SC_PCAP_DONT_INCLUDE_PCAP_H 1
 
 #include "suricata-common.h"
@@ -381,7 +380,7 @@ int EBPFLoadFile(const char *iface, const char *path, const char * section,
         }
     }
 
-    if (found == false) {
+    if (!found) {
         SCLogError("No section '%s' in '%s' file. Will not be able to use the file", section, path);
         return -1;
     }
@@ -587,7 +586,6 @@ void EBPFBypassFree(void *data)
         SCFree(eb->key[1]);
     }
     SCFree(eb);
-    return;
 }
 
 /**

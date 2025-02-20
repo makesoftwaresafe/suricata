@@ -1,4 +1,4 @@
-/* Copyright (C) 2021 Open Information Security Foundation
+/* Copyright (C) 2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -15,8 +15,8 @@
  * 02110-1301, USA.
  */
 
-#ifndef __APP_LAYER_HTP_RANGE_H__
-#define __APP_LAYER_HTP_RANGE_H__
+#ifndef SURICATA_APP_LAYER_HTP_RANGE_H
+#define SURICATA_APP_LAYER_HTP_RANGE_H
 
 #include "suricata-common.h"
 
@@ -63,7 +63,7 @@ typedef struct HttpRangeContainerFile {
     /** key length */
     uint32_t len;
     /** expire time in epoch */
-    uint32_t expire;
+    SCTime_t expire;
     /** pointer to hashtable data, for locking and use count */
     THashData *hdata;
     /** total expected size of the file in ranges */
@@ -111,4 +111,8 @@ HttpRangeContainerBlock *HttpRangeContainerOpenFile(const unsigned char *key, ui
 
 void HttpRangeFreeBlock(HttpRangeContainerBlock *b);
 
-#endif /* __APP_LAYER_HTP_RANGE_H__ */
+uint64_t HTPByteRangeMemcapGlobalCounter(void);
+uint64_t HTPByteRangeMemuseGlobalCounter(void);
+int HTPByteRangeSetMemcap(uint64_t);
+
+#endif /* SURICATA_APP_LAYER_HTP_RANGE_H */

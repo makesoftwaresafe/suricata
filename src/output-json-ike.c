@@ -90,7 +90,7 @@ static int JsonIKELogger(ThreadVars *tv, void *thread_data, const Packet *p, Flo
         goto error;
     }
 
-    OutputJsonBuilderBuffer(jb, thread->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, thread->ctx);
 
     jb_free(jb);
     return TM_ECODE_OK;
@@ -184,5 +184,5 @@ void JsonIKELogRegister(void)
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonIKELog", "eve-log.ike",
             OutputIKELogInitSub, ALPROTO_IKE, JsonIKELogger, JsonIKELogThreadInit,
-            JsonIKELogThreadDeinit, NULL);
+            JsonIKELogThreadDeinit);
 }

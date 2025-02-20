@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __FLOW_UTIL_H__
-#define __FLOW_UTIL_H__
+#ifndef SURICATA_FLOW_UTIL_H
+#define SURICATA_FLOW_UTIL_H
 
 #include "flow.h"
 #include "stream-tcp-private.h"
@@ -41,7 +41,6 @@
         (f)->dp = 0;                                                                               \
         (f)->proto = 0;                                                                            \
         (f)->livedev = NULL;                                                                       \
-        (f)->timeout_at = 0;                                                                       \
         (f)->timeout_policy = 0;                                                                   \
         (f)->vlan_idx = 0;                                                                         \
         (f)->next = NULL;                                                                          \
@@ -88,7 +87,6 @@
         (f)->vlan_idx = 0;                                                                         \
         (f)->ffr = 0;                                                                              \
         (f)->next = NULL;                                                                          \
-        (f)->timeout_at = 0;                                                                       \
         (f)->timeout_policy = 0;                                                                   \
         (f)->flow_state = 0;                                                                       \
         (f)->tenant_id = 0;                                                                        \
@@ -140,7 +138,7 @@
 Flow *FlowAlloc(void);
 void FlowFree(Flow *);
 uint8_t FlowGetProtoMapping(uint8_t);
-void FlowInit(Flow *, const Packet *);
+void FlowInit(ThreadVars *, Flow *, const Packet *);
 uint8_t FlowGetReverseProtoMapping(uint8_t rproto);
 
 /* flow end counter logic */
@@ -165,4 +163,4 @@ static inline void FlowEndCountersUpdate(ThreadVars *tv, FlowEndCounters *fec, F
 
 void FlowEndCountersRegister(ThreadVars *t, FlowEndCounters *fec);
 
-#endif /* __FLOW_UTIL_H__ */
+#endif /* SURICATA_FLOW_UTIL_H */

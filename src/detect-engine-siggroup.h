@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_ENGINE_SIGGROUP_H__
-#define __DETECT_ENGINE_SIGGROUP_H__
+#ifndef SURICATA_DETECT_ENGINE_SIGGROUP_H
+#define SURICATA_DETECT_ENGINE_SIGGROUP_H
 
 int SigGroupHeadAppendSig(const DetectEngineCtx *, SigGroupHead **, const Signature *);
 int SigGroupHeadClearSigs(SigGroupHead *);
@@ -38,10 +38,9 @@ void SigGroupHeadHashFree(DetectEngineCtx *);
 
 int SigGroupHeadHashInit(DetectEngineCtx *);
 
-int SigGroupHeadHashRemove(DetectEngineCtx *, SigGroupHead *);
-
 void SigGroupHeadInitDataFree(SigGroupHeadInitData *sghid);
 void SigGroupHeadSetSigCnt(SigGroupHead *sgh, uint32_t max_idx);
+bool SigGroupHeadEqual(const SigGroupHead *, const SigGroupHead *);
 void SigGroupHeadSetProtoAndDirection(SigGroupHead *sgh,
                                       uint8_t ipproto, int dir);
 int SigGroupHeadBuildMatchArray(DetectEngineCtx *de_ctx, SigGroupHead *sgh, uint32_t max_idx);
@@ -58,4 +57,4 @@ void SigGroupHeadSetupFiles(const DetectEngineCtx *de_ctx, SigGroupHead *sgh);
 
 int SigGroupHeadBuildNonPrefilterArray(DetectEngineCtx *de_ctx, SigGroupHead *sgh);
 
-#endif /* __DETECT_ENGINE_SIGGROUP_H__ */
+#endif /* SURICATA_DETECT_ENGINE_SIGGROUP_H */

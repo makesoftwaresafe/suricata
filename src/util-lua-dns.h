@@ -21,13 +21,9 @@
  * \author Eric Leblond <eric@regit.org>
  */
 
-#ifndef __UTIL_LUA_DNS_H__
-#define __UTIL_LUA_DNS_H__
-
-#ifdef HAVE_LUA
+#ifndef SURICATA_UTIL_LUA_DNS_H
+#define SURICATA_UTIL_LUA_DNS_H
 
 int LuaRegisterDnsFunctions(lua_State *luastate);
-
-#endif /* HAVE_LUA */
 
 #endif /* __UTIL_LUA_HTTP_H__ */

@@ -235,8 +235,11 @@ uint16_t FileFlowFlagsToFlags(const uint16_t flow_file_flags, uint8_t direction)
     uint16_t flags = 0;
 
     if (direction == STREAM_TOSERVER) {
-        if ((flow_file_flags & (FLOWFILE_NO_STORE_TS | FLOWFILE_STORE)) == FLOWFILE_NO_STORE_TS) {
+        if ((flow_file_flags & (FLOWFILE_NO_STORE_TS | FLOWFILE_STORE_TS)) ==
+                FLOWFILE_NO_STORE_TS) {
             flags |= FILE_NOSTORE;
+        } else if (flow_file_flags & FLOWFILE_STORE_TS) {
+            flags |= FILE_STORE;
         }
 
         if (flow_file_flags & FLOWFILE_NO_MAGIC_TS) {
@@ -255,8 +258,11 @@ uint16_t FileFlowFlagsToFlags(const uint16_t flow_file_flags, uint8_t direction)
             flags |= FILE_NOSHA256;
         }
     } else {
-        if ((flow_file_flags & (FLOWFILE_NO_STORE_TC | FLOWFILE_STORE)) == FLOWFILE_NO_STORE_TC) {
+        if ((flow_file_flags & (FLOWFILE_NO_STORE_TC | FLOWFILE_STORE_TC)) ==
+                FLOWFILE_NO_STORE_TC) {
             flags |= FILE_NOSTORE;
+        } else if (flow_file_flags & FLOWFILE_STORE_TC) {
+            flags |= FILE_STORE;
         }
 
         if (flow_file_flags & FLOWFILE_NO_MAGIC_TC) {
@@ -274,9 +280,6 @@ uint16_t FileFlowFlagsToFlags(const uint16_t flow_file_flags, uint8_t direction)
         if (flow_file_flags & FLOWFILE_NO_SHA256_TC) {
             flags |= FILE_NOSHA256;
         }
-    }
-    if (flow_file_flags & FLOWFILE_STORE) {
-        flags |= FILE_STORE;
     }
     DEBUG_VALIDATE_BUG_ON((flags & (FILE_STORE | FILE_NOSTORE)) == (FILE_STORE | FILE_NOSTORE));
 
@@ -659,6 +662,9 @@ static int FileStoreNoStoreCheck(File *ff)
 static int AppendData(
         const StreamingBufferConfig *sbcfg, File *file, const uint8_t *data, uint32_t data_len)
 {
+    DEBUG_VALIDATE_BUG_ON(
+            data_len > BIT_U32(26)); // 64MiB as a limit per chunk seems already excessive
+
     SCLogDebug("file %p data_len %u", file, data_len);
     if (StreamingBufferAppendNoTrack(file->sb, sbcfg, data, data_len) != 0) {
         SCLogDebug("file %p StreamingBufferAppendNoTrack failed", file);

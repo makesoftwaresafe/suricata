@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2023 Open Information Security Foundation
+/* Copyright (C) 2007-2025 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -27,19 +27,24 @@
 #include "suricata-common.h"
 #include "suricata.h"
 #include "rust.h"
+#include "action-globals.h"
 #include "detect.h"
 #include "detect-parse.h"
 #include "detect-engine.h"
 #include "detect-engine-analyzer.h"
 #include "detect-engine-mpm.h"
+#include "detect-engine-uint.h"
 #include "conf.h"
 #include "detect-content.h"
 #include "detect-pcre.h"
 #include "detect-bytejump.h"
 #include "detect-bytetest.h"
+#include "detect-isdataat.h"
 #include "detect-flow.h"
 #include "detect-tcp-flags.h"
+#include "detect-tcp-ack.h"
 #include "detect-ipopts.h"
+#include "detect-tcp-seq.h"
 #include "feature.h"
 #include "util-print.h"
 #include "util-time.h"
@@ -47,6 +52,8 @@
 #include "util-conf.h"
 #include "detect-flowbits.h"
 #include "util-var-name.h"
+#include "detect-icmp-id.h"
+#include "detect-tcp-window.h"
 
 static int rule_warnings_only = 0;
 
@@ -282,7 +289,6 @@ void EngineAnalysisFP(const DetectEngineCtx *de_ctx, const Signature *s, char *l
     SCFree(pat);
 
     fprintf(fp, "\n");
-    return;
 }
 
 /**
@@ -453,8 +459,6 @@ static void CleanupFPAnalyzer(DetectEngineCtx *de_ctx)
 
     fclose(de_ctx->ea->rule_engine_analysis_fp);
     de_ctx->ea->rule_engine_analysis_fp = NULL;
-
-    return;
 }
 
 static void CleanupRuleAnalyzer(DetectEngineCtx *de_ctx)
@@ -614,8 +618,6 @@ static void EngineAnalysisRulesPrintFP(const DetectEngineCtx *de_ctx, const Sign
         fprintf(ea_ctx->rule_engine_analysis_fp, "(with %d transform(s)) ", bt->transforms.cnt);
     }
     fprintf(ea_ctx->rule_engine_analysis_fp, "buffer.\n");
-
-    return;
 }
 
 void EngineAnalysisRulesFailure(const DetectEngineCtx *de_ctx, char *line, char *file, int lineno)
@@ -854,6 +856,14 @@ static void DumpMatches(RuleAnalyzer *ctx, JsonBuilder *js, const SigMatchData *
                 jb_close(js);
                 break;
             }
+            case DETECT_ABSENT: {
+                const DetectAbsentData *dad = (const DetectAbsentData *)smd->ctx;
+                jb_open_object(js, "absent");
+                jb_set_bool(js, "or_else", dad->or_else);
+                jb_close(js);
+                break;
+            }
+
             case DETECT_IPOPTS: {
                 const DetectIpOptsData *cd = (const DetectIpOptsData *)smd->ctx;
 
@@ -901,6 +911,50 @@ static void DumpMatches(RuleAnalyzer *ctx, JsonBuilder *js, const SigMatchData *
                     jb_set_string(js, "operator", "or");
                 }
                 jb_close(js); // object
+                break;
+            }
+            case DETECT_ACK: {
+                const DetectAckData *cd = (const DetectAckData *)smd->ctx;
+
+                jb_open_object(js, "ack");
+                jb_set_uint(js, "number", cd->ack);
+                jb_close(js);
+                break;
+            }
+            case DETECT_SEQ: {
+                const DetectSeqData *cd = (const DetectSeqData *)smd->ctx;
+                jb_open_object(js, "seq");
+                jb_set_uint(js, "number", cd->seq);
+                jb_close(js);
+                break;
+            }
+            case DETECT_TCPMSS: {
+                const DetectU16Data *cd = (const DetectU16Data *)smd->ctx;
+                jb_open_object(js, "tcp_mss");
+                SCDetectU16ToJson(js, cd);
+                jb_close(js);
+                break;
+            }
+            case DETECT_ICMP_ID: {
+                const DetectIcmpIdData *cd = (const DetectIcmpIdData *)smd->ctx;
+                jb_open_object(js, "id");
+                jb_set_uint(js, "number", SCNtohs(cd->id));
+                jb_close(js);
+                break;
+            }
+            case DETECT_WINDOW: {
+                const DetectWindowData *wd = (const DetectWindowData *)smd->ctx;
+                jb_open_object(js, "window");
+                jb_set_uint(js, "size", wd->size);
+                jb_set_bool(js, "negated", wd->negated);
+                jb_close(js);
+                break;
+            }
+            case DETECT_FLOW_AGE: {
+                const DetectU32Data *cd = (const DetectU32Data *)smd->ctx;
+                jb_open_object(js, "flow_age");
+                SCDetectU32ToJson(js, cd);
+                jb_close(js);
                 break;
             }
         }
@@ -952,6 +1006,9 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
     if (s->mask & SIG_MASK_REQUIRE_ENGINE_EVENT) {
         jb_append_string(ctx.js, "engine_event");
     }
+    if (s->mask & SIG_MASK_REQUIRE_REAL_PKT) {
+        jb_append_string(ctx.js, "real_pkt");
+    }
     jb_close(ctx.js);
 
     switch (s->type) {
@@ -990,6 +1047,34 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
             break;
     }
 
+    // dependencies object and its subfields only logged if we have values
+    if (s->init_data->is_rule_state_dependant) {
+        jb_open_object(ctx.js, "dependencies");
+        jb_open_object(ctx.js, "flowbits");
+        jb_open_object(ctx.js, "upstream");
+        if (s->init_data->rule_state_dependant_sids_size > 0) {
+            jb_open_object(ctx.js, "state_modifying_rules");
+            jb_open_array(ctx.js, "sids");
+            for (uint32_t i = 0; i < s->init_data->rule_state_dependant_sids_idx; i++) {
+                jb_append_uint(ctx.js, s->init_data->rule_state_dependant_sids_array[i]);
+            }
+            jb_close(ctx.js); // sids
+            jb_open_array(ctx.js, "names");
+            for (uint32_t i = 0; i < s->init_data->rule_state_flowbits_ids_size - 1; i++) {
+                if (s->init_data->rule_state_flowbits_ids_array[i] != 0) {
+                    jb_append_string(ctx.js,
+                            VarNameStoreSetupLookup(s->init_data->rule_state_flowbits_ids_array[i],
+                                    VAR_TYPE_FLOW_BIT));
+                }
+            }
+            jb_close(ctx.js); // names
+            jb_close(ctx.js); // state_modifying_rules
+        }
+        jb_close(ctx.js); // upstream
+        jb_close(ctx.js); // flowbits
+        jb_close(ctx.js); // dependencies
+    }
+
     jb_open_array(ctx.js, "flags");
     if (s->flags & SIG_FLAG_SRC_ANY) {
         jb_append_string(ctx.js, "src_any");
@@ -1003,7 +1088,7 @@ void EngineAnalysisRules2(const DetectEngineCtx *de_ctx, const Signature *s)
     if (s->flags & SIG_FLAG_DP_ANY) {
         jb_append_string(ctx.js, "dp_any");
     }
-    if (s->flags & SIG_FLAG_NOALERT) {
+    if ((s->action & ACTION_ALERT) == 0) {
         jb_append_string(ctx.js, "noalert");
     }
     if (s->flags & SIG_FLAG_DSIZE) {
@@ -1805,5 +1890,4 @@ void EngineAnalysisRules(const DetectEngineCtx *de_ctx,
         }
         fprintf(fp, "\n");
     }
-    return;
 }

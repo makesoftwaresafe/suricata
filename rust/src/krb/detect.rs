@@ -31,14 +31,14 @@ use nom7::IResult;
 use std::ffi::CStr;
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_tx_get_msgtype(tx: &mut KRB5Transaction, ptr: *mut u32) {
+pub unsafe extern "C" fn rs_krb5_tx_get_msgtype(tx: &KRB5Transaction, ptr: *mut u32) {
     *ptr = tx.msg_type.0;
 }
 
 /// Get error code, if present in transaction
 /// Return 0 if error code was filled, else 1
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_tx_get_errcode(tx: &mut KRB5Transaction, ptr: *mut i32) -> u32 {
+pub unsafe extern "C" fn rs_krb5_tx_get_errcode(tx: &KRB5Transaction, ptr: *mut i32) -> u32 {
     match tx.error_code {
         Some(ref e) => {
             *ptr = e.0;
@@ -50,7 +50,7 @@ pub unsafe extern "C" fn rs_krb5_tx_get_errcode(tx: &mut KRB5Transaction, ptr: *
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_krb5_tx_get_cname(
-    tx: &mut KRB5Transaction, i: u32, buffer: *mut *const u8, buffer_len: *mut u32,
+    tx: &KRB5Transaction, i: u32, buffer: *mut *const u8, buffer_len: *mut u32,
 ) -> u8 {
     if let Some(ref s) = tx.cname {
         if (i as usize) < s.name_string.len() {
@@ -65,7 +65,7 @@ pub unsafe extern "C" fn rs_krb5_tx_get_cname(
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_krb5_tx_get_sname(
-    tx: &mut KRB5Transaction, i: u32, buffer: *mut *const u8, buffer_len: *mut u32,
+    tx: &KRB5Transaction, i: u32, buffer: *mut *const u8, buffer_len: *mut u32,
 ) -> u8 {
     if let Some(ref s) = tx.sname {
         if (i as usize) < s.name_string.len() {
@@ -102,7 +102,6 @@ impl DetectKrb5TicketEncryptionList {
         }
     }
 }
-
 
 // Suppress large enum variant lint as the LIST is very large compared
 // to the boolean variant.
@@ -193,7 +192,8 @@ pub fn detect_parse_encryption_list(i: &str) -> IResult<&str, DetectKrb5TicketEn
     let (i, v) = many1(detect_parse_encryption_item)(i)?;
     for &val in v.iter() {
         let vali = val.0;
-        if vali < 0 && ((-vali) as usize) < KRB_TICKET_FASTARRAY_SIZE {
+        // KRB_TICKET_FASTARRAY_SIZE is a constant typed usize but which fits in a i32
+        if vali < 0 && vali > -(KRB_TICKET_FASTARRAY_SIZE as i32) {
             l.negative[(-vali) as usize] = true;
         } else if vali >= 0 && (vali as usize) < KRB_TICKET_FASTARRAY_SIZE {
             l.positive[vali as usize] = true;
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn rs_krb5_detect_encryption_parse(
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_krb5_detect_encryption_match(
-    tx: &mut KRB5Transaction, ctx: &DetectKrb5TicketEncryptionData,
+    tx: &KRB5Transaction, ctx: &DetectKrb5TicketEncryptionData,
 ) -> std::os::raw::c_int {
     if let Some(x) = tx.ticket_etype {
         match ctx {
@@ -325,6 +325,16 @@ mod tests {
             }
             _ => {
                 panic!("Result should have been ok.");
+            }
+        }
+        let ctx = detect_parse_encryption("-2147483648").unwrap().1;
+        match ctx {
+            DetectKrb5TicketEncryptionData::LIST(l) => {
+                assert_eq!(l.other.len(), 1);
+                assert_eq!(l.other[0], EncryptionType(i32::MIN));
+            }
+            _ => {
+                panic!("Result should have been list.");
             }
         }
     }

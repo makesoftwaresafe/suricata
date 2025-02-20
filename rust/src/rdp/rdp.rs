@@ -20,9 +20,11 @@
 //! RDP application layer
 
 use crate::applayer::{self, *};
-use crate::core::{AppProto, Flow, ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::core::{ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::flow::Flow;
 use crate::rdp::parser::*;
 use nom7::Err;
+use suricata_sys::sys::AppProto;
 use std;
 use std::collections::VecDeque;
 use tls_parser::{parse_tls_plaintext, TlsMessage, TlsMessageHandshake, TlsRecordType};
@@ -453,8 +455,8 @@ pub unsafe extern "C" fn rs_rdp_parse_tc(
     return state.parse_tc(buf);
 }
 
-export_tx_data_get!(rs_rdp_get_tx_data, RdpTransaction);
-export_state_data_get!(rs_rdp_get_state_data, RdpState);
+export_tx_data_get!(rdp_get_tx_data, RdpTransaction);
+export_state_data_get!(rdp_get_state_data, RdpState);
 
 //
 // registration
@@ -489,11 +491,10 @@ pub unsafe extern "C" fn rs_rdp_register_parser() {
         localstorage_free: None,
         get_tx_files: None,
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<RdpState, RdpTransaction>),
-        get_tx_data: rs_rdp_get_tx_data,
-        get_state_data: rs_rdp_get_state_data,
+        get_tx_data: rdp_get_tx_data,
+        get_state_data: rdp_get_state_data,
         apply_tx_config: None,
         flags: 0,
-        truncate: None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };
@@ -506,6 +507,7 @@ pub unsafe extern "C" fn rs_rdp_register_parser() {
         if AppLayerParserConfParserEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {
             let _ = AppLayerRegisterParser(&parser, alproto);
         }
+        AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_RDP);
     }
 }
 

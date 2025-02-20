@@ -22,8 +22,8 @@
  * \author Anoop Saldanha <anoopsaldanha@gmail.com>
  */
 
-#ifndef __TM_THREADS_COMMON_H__
-#define __TM_THREADS_COMMON_H__
+#ifndef SURICATA_TM_THREADS_COMMON_H
+#define SURICATA_TM_THREADS_COMMON_H
 
 /** \brief Thread Model Module id's.
  *
@@ -39,8 +39,6 @@ typedef enum {
     TMM_RECEIVEPCAPFILE,
     TMM_DECODEPCAP,
     TMM_DECODEPCAPFILE,
-    TMM_RECEIVEPFRING,
-    TMM_DECODEPFRING,
     TMM_RECEIVEPLUGIN,
     TMM_DECODEPLUGIN,
     TMM_RESPONDREJECT,
@@ -60,8 +58,6 @@ typedef enum {
     TMM_RECEIVENETMAP,
     TMM_DECODENETMAP,
     TMM_ALERTPCAPINFO,
-    TMM_RECEIVENAPATECH,
-    TMM_DECODENAPATECH,
     TMM_STATSLOGGER,
     TMM_RECEIVENFLOG,
     TMM_DECODENFLOG,
@@ -94,5 +90,4 @@ enum {
     TVT_MAX,
 };
 
-#endif /* __TM_THREADS_COMMON_H__ */
-
+#endif /* SURICATA_TM_THREADS_COMMON_H */

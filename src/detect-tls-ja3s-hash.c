@@ -56,6 +56,15 @@
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 
+#ifndef HAVE_JA3
+static int DetectJA3SetupNoSupport(DetectEngineCtx *a, Signature *b, const char *c)
+{
+    SCLogError("no JA3 support built in");
+    return -1;
+}
+#endif /* HAVE_JA3 */
+
+#ifdef HAVE_JA3
 static int DetectTlsJa3SHashSetup(DetectEngineCtx *, Signature *, const char *);
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
        const DetectEngineTransforms *transforms,
@@ -66,19 +75,25 @@ static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
 static bool DetectTlsJa3SHashValidateCallback(const Signature *s,
        const char **sigerror);
 static int g_tls_ja3s_hash_buffer_id = 0;
+#endif
 
 /**
  * \brief Registration function for keyword: ja3s.hash
  */
 void DetectTlsJa3SHashRegister(void)
 {
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].name = "ja3s.hash";
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].desc = "sticky buffer to match the JA3S hash buffer";
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].url = "/rules/ja3-keywords.html#ja3s-hash";
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].Setup = DetectTlsJa3SHashSetup;
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].flags |= SIGMATCH_NOOPT;
-    sigmatch_table[DETECT_AL_TLS_JA3S_HASH].flags |= SIGMATCH_INFO_STICKY_BUFFER;
+    sigmatch_table[DETECT_TLS_JA3S_HASH].name = "ja3s.hash";
+    sigmatch_table[DETECT_TLS_JA3S_HASH].desc = "sticky buffer to match the JA3S hash buffer";
+    sigmatch_table[DETECT_TLS_JA3S_HASH].url = "/rules/ja3-keywords.html#ja3s-hash";
+#ifdef HAVE_JA3
+    sigmatch_table[DETECT_TLS_JA3S_HASH].Setup = DetectTlsJa3SHashSetup;
+#else  /* HAVE_JA3 */
+    sigmatch_table[DETECT_TLS_JA3S_HASH].Setup = DetectJA3SetupNoSupport;
+#endif /* HAVE_JA3 */
+    sigmatch_table[DETECT_TLS_JA3S_HASH].flags |= SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_TLS_JA3S_HASH].flags |= SIGMATCH_INFO_STICKY_BUFFER;
 
+#ifdef HAVE_JA3
     DetectAppLayerInspectEngineRegister("ja3s.hash", ALPROTO_TLS, SIG_FLAG_TOCLIENT, 0,
             DetectEngineInspectBufferGeneric, GetData);
 
@@ -100,8 +115,10 @@ void DetectTlsJa3SHashRegister(void)
             DetectTlsJa3SHashValidateCallback);
 
     g_tls_ja3s_hash_buffer_id = DetectBufferTypeGetByName("ja3s.hash");
+#endif /* HAVE_JA3 */
 }
 
+#ifdef HAVE_JA3
 /**
  * \brief this function setup the ja3s.hash modifier keyword used in the rule
  *
@@ -127,12 +144,12 @@ static int DetectTlsJa3SHashSetup(DetectEngineCtx *de_ctx, Signature *s, const c
 
     /* Check if JA3 is disabled */
     if (!RunmodeIsUnittests() && Ja3IsDisabled("rule")) {
-        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_TLS_JA3S_HASH)) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_TLS_JA3S_HASH)) {
             SCLogError("ja3(s) support is not enabled");
         }
         return -2;
     }
-    s->init_data->init_flags |= SIG_FLAG_INIT_JA3;
+    s->init_data->init_flags |= SIG_FLAG_INIT_JA;
 
     return 0;
 }
@@ -223,3 +240,4 @@ static void DetectTlsJa3SHashSetupCallback(const DetectEngineCtx *de_ctx,
         }
     }
 }
+#endif

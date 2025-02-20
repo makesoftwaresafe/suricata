@@ -25,22 +25,11 @@
 #include "host.h"
 
 #include "detect-engine-tag.h"
-#include "detect-engine-threshold.h"
 
 #include "host-bit.h"
 #include "host-timeout.h"
 
 #include "reputation.h"
-
-uint32_t HostGetSpareCount(void)
-{
-    return HostSpareQueueGetSize();
-}
-
-uint32_t HostGetActiveCount(void)
-{
-    return SC_ATOMIC_GET(host_counter);
-}
 
 /** \internal
  *  \brief See if we can really discard this host. Check use_cnt reference.
@@ -63,7 +52,6 @@ static int HostHostTimedOut(Host *h, SCTime_t ts)
 
     busy |= (h->iprep && SRepHostTimedOut(h) == 0);
     busy |= (TagHostHasTag(h) && TagTimeoutCheck(h, ts) == 0);
-    busy |= (ThresholdHostHasThreshold(h) && ThresholdHostTimeoutCheck(h, ts) == 0);
     busy |= (HostHasHostBits(h) && HostBitsTimedoutCheck(h, ts) == 0);
     SCLogDebug("host %p %s", h, busy ? "still active" : "timed out");
     return !busy;

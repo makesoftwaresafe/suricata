@@ -7,6 +7,7 @@ Suricata Rules
    meta
    header-keywords
    payload-keywords
+   integer-keywords
    transforms
    prefilter-keywords
    flow-keywords
@@ -16,7 +17,7 @@ Suricata Rules
    dns-keywords
    tls-keywords
    ssh-keywords
-   ja3-keywords
+   ja-keywords
    modbus-keyword
    dcerpc-keywords
    dhcp-keywords
@@ -35,8 +36,11 @@ Suricata Rules
    quic-keywords
    nfs-keywords
    smtp-keywords
+   websocket-keywords
    app-layer
+   decode-layer
    xbits
+   noalert
    thresholding
    ip-reputation-rules
    ipaddr
@@ -46,3 +50,6 @@ Suricata Rules
    differences-from-snort
    multi-buffer-matching
    tag
+   vlan-keywords
+   ldap-keywords
+   rule-types

@@ -131,8 +131,12 @@ uint8_t *BasicSearchNocase(const uint8_t *haystack, uint32_t haystack_len, const
     return NULL;
 }
 
-void BasicSearchInit (void)
+uint32_t BasicSearchNocaseIndex(
+        const uint8_t *haystack, uint32_t haystack_len, const uint8_t *needle, uint16_t needle_len)
 {
-    /* nothing no more */
+    uint8_t *r = BasicSearchNocase(haystack, haystack_len, needle, needle_len);
+    if (r == NULL) {
+        return haystack_len;
+    }
+    return (uint32_t)(r - haystack);
 }
-

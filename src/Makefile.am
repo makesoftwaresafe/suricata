@@ -3,7 +3,7 @@ if BUILD_FUZZTARGETS
     bin_PROGRAMS += fuzz_applayerprotodetectgetproto \
     fuzz_applayerparserparse fuzz_siginit \
     fuzz_confyamlloadstring fuzz_decodepcapfile \
-    fuzz_sigpcap fuzz_mimedecparseline
+    fuzz_sigpcap fuzz_mimedecparseline fuzz_decodebase64
 if HAS_FUZZPCAP
     bin_PROGRAMS += fuzz_sigpcap_aware fuzz_predefpcap_aware
 endif
@@ -17,8 +17,6 @@ noinst_HEADERS = \
 	app-layer-detect-proto.h \
 	app-layer-dnp3.h \
 	app-layer-dnp3-objects.h \
-	app-layer-enip-common.h \
-	app-layer-enip.h \
 	app-layer-events.h \
 	app-layer-expectation.h \
 	app-layer-frames.h \
@@ -33,25 +31,19 @@ noinst_HEADERS = \
 	app-layer-htp-xff.h \
 	app-layer-http2.h \
 	app-layer-ike.h \
-	app-layer-krb5.h \
 	app-layer-modbus.h \
-	app-layer-quic.h \
 	app-layer-nfs-tcp.h \
 	app-layer-nfs-udp.h \
-	app-layer-ntp.h \
 	app-layer-parser.h \
 	app-layer-protos.h \
-	app-layer-rdp.h \
 	app-layer-register.h \
-	app-layer-rfb.h \
-	app-layer-sip.h \
 	app-layer-smb.h \
 	app-layer-smtp.h \
-	app-layer-snmp.h \
 	app-layer-ssh.h \
 	app-layer-ssl.h \
 	app-layer-tftp.h \
-	autoconf.h \
+	app-layer-imap.h \
+	bindgen.h \
 	build-info.h \
 	conf.h \
 	conf-yaml-loader.h \
@@ -63,6 +55,7 @@ noinst_HEADERS = \
 	datasets-reputation.h \
 	datasets-sha256.h \
 	datasets-string.h \
+	decode-arp.h \
 	decode-chdlc.h \
 	decode-erspan.h \
 	decode-esp.h \
@@ -92,7 +85,7 @@ noinst_HEADERS = \
 	defrag-config.h \
 	defrag.h \
 	defrag-hash.h \
-	defrag-queue.h \
+	defrag-stack.h \
 	defrag-timeout.h \
 	detect-app-layer-event.h \
 	detect-app-layer-protocol.h \
@@ -106,7 +99,6 @@ noinst_HEADERS = \
 	detect-bytejump.h \
 	detect-bytemath.h \
 	detect-bytetest.h \
-	detect-cipservice.h \
 	detect-classtype.h \
 	detect-config.h \
 	detect-content.h \
@@ -122,6 +114,8 @@ noinst_HEADERS = \
 	detect-dnp3.h \
 	detect-dns-answer-name.h \
 	detect-dns-opcode.h \
+	detect-dns-rcode.h \
+	detect-dns-rrtype.h \
 	detect-dns-query.h \
 	detect-dns-query-name.h \
 	detect-dsize.h \
@@ -133,11 +127,11 @@ noinst_HEADERS = \
 	detect-engine-build.h \
 	detect-engine-content-inspection.h \
 	detect-engine-dcepayload.h \
-	detect-engine-enip.h \
 	detect-engine-event.h \
 	detect-engine-file.h \
 	detect-engine-frame.h \
 	detect-engine.h \
+	detect-engine-helper.h \
 	detect-engine-iponly.h \
 	detect-engine-loader.h \
 	detect-engine-mpm.h \
@@ -175,6 +169,7 @@ noinst_HEADERS = \
 	detect-frame.h \
 	detect-ftpbounce.h \
 	detect-ftpdata.h \
+	detect-ftp-command.h \
 	detect-geoip.h \
 	detect-gid.h \
 	detect.h \
@@ -231,6 +226,7 @@ noinst_HEADERS = \
 	detect-ipv6hdr.h \
 	detect-isdataat.h \
 	detect-itype.h \
+	detect-ja4-hash.h \
 	detect-krb5-cname.h \
 	detect-krb5-errcode.h \
 	detect-krb5-msgtype.h \
@@ -247,23 +243,6 @@ noinst_HEADERS = \
 	detect-quic-version.h \
 	detect-quic-cyu-hash.h \
 	detect-quic-cyu-string.h \
-	detect-mqtt-connack-sessionpresent.h \
-	detect-mqtt-connect-clientid.h \
-	detect-mqtt-connect-flags.h \
-	detect-mqtt-connect-password.h \
-	detect-mqtt-connect-protocol-string.h \
-	detect-mqtt-connect-username.h \
-	detect-mqtt-connect-willmessage.h \
-	detect-mqtt-connect-willtopic.h \
-	detect-mqtt-flags.h \
-	detect-mqtt-protocol-version.h \
-	detect-mqtt-publish-message.h \
-	detect-mqtt-publish-topic.h \
-	detect-mqtt-qos.h \
-	detect-mqtt-reason-code.h \
-	detect-mqtt-subscribe-topic.h \
-	detect-mqtt-type.h \
-	detect-mqtt-unsubscribe-topic.h \
 	detect-msg.h \
 	detect-nfs-procedure.h \
 	detect-nfs-version.h \
@@ -281,28 +260,15 @@ noinst_HEADERS = \
 	detect-replace.h \
 	detect-requires.h \
 	detect-rev.h \
-	detect-rfb-name.h \
-	detect-rfb-secresult.h \
-	detect-rfb-sectype.h \
 	detect-rpc.h \
 	detect-sameip.h \
 	detect-sid.h \
 	detect-sip-method.h \
-	detect-sip-protocol.h \
-	detect-sip-request-line.h \
-	detect-sip-response-line.h \
-	detect-sip-stat-code.h \
-	detect-sip-stat-msg.h \
 	detect-sip-uri.h \
 	detect-smb-ntlmssp.h \
 	detect-smb-share.h \
-	detect-snmp-community.h \
-	detect-snmp-pdu_type.h \
-	detect-snmp-usm.h \
-	detect-snmp-version.h \
-	detect-dhcp-leasetime.h \
-	detect-dhcp-rebinding-time.h \
-	detect-dhcp-renewal-time.h \
+	detect-smb-version.h \
+	detect-smtp.h \
 	detect-ssh-hassh.h \
 	detect-ssh-hassh-server.h \
 	detect-ssh-hassh-server-string.h \
@@ -324,14 +290,15 @@ noinst_HEADERS = \
 	detect-tcp-window.h \
 	detect-template2.h \
 	detect-template.h \
-	detect-template-rust-buffer.h \
 	detect-threshold.h \
+	detect-tls-alpn.h \
 	detect-tls-cert-fingerprint.h \
 	detect-tls-cert-issuer.h \
 	detect-tls-cert-serial.h \
 	detect-tls-certs.h \
 	detect-tls-cert-subject.h \
 	detect-tls-cert-validity.h \
+	detect-tls-subjectaltname.h \
 	detect-tls.h \
 	detect-tls-ja3-hash.h \
 	detect-tls-ja3s-hash.h \
@@ -341,27 +308,20 @@ noinst_HEADERS = \
 	detect-tls-version.h \
 	detect-tls-random.h \
 	detect-tos.h \
-	detect-transform-casechange.h \
-	detect-transform-compress-whitespace.h \
-	detect-transform-dotprefix.h \
-	detect-transform-header-lowercase.h \
-	detect-transform-md5.h \
+	detect-transform-base64.h \
 	detect-transform-pcrexform.h \
-	detect-transform-sha1.h \
-	detect-transform-sha256.h \
-	detect-transform-strip-whitespace.h \
-	detect-transform-urldecode.h \
-	detect-transform-xor.h \
 	detect-ttl.h \
 	detect-udphdr.h \
 	detect-uricontent.h \
 	detect-urilen.h \
 	detect-within.h \
 	detect-xbits.h \
+	detect-vlan.h \
 	device-storage.h \
 	feature.h \
 	flow-bit.h \
 	flow-bypass.h \
+	flow-callbacks.h \
 	flow.h \
 	flow-hash.h \
 	flow-manager.h \
@@ -390,6 +350,7 @@ noinst_HEADERS = \
 	log-tcp-data.h \
 	log-tlslog.h \
 	log-tlsstore.h \
+	output-eve.h \
 	output-eve-stream.h \
 	output-eve-null.h \
 	output-filedata.h \
@@ -399,7 +360,7 @@ noinst_HEADERS = \
 	output.h \
 	output-json-alert.h \
 	output-json-anomaly.h \
-	output-json-bittorrent-dht.h \
+	output-json-arp.h \
 	output-json-dcerpc.h \
 	output-json-dhcp.h \
 	output-json-dnp3.h \
@@ -412,27 +373,16 @@ noinst_HEADERS = \
 	output-json-frame.h \
 	output-json-ftp.h \
 	output-json.h \
-	output-json-http2.h \
 	output-json-http.h \
 	output-json-ike.h \
-	output-json-krb5.h \
 	output-json-metadata.h \
-	output-json-modbus.h \
-	output-json-quic.h \
 	output-json-mqtt.h \
 	output-json-netflow.h \
 	output-json-nfs.h \
 	output-json-pgsql.h \
-	output-json-rdp.h \
-	output-json-rfb.h \
-	output-json-sip.h \
 	output-json-smb.h \
 	output-json-smtp.h \
-	output-json-snmp.h \
-	output-json-ssh.h \
 	output-json-stats.h \
-	output-json-template.h \
-	output-json-tftp.h \
 	output-json-tls.h \
 	output-eve-syslog.h \
 	output-lua.h \
@@ -453,13 +403,11 @@ noinst_HEADERS = \
 	runmode-erf-dag.h \
 	runmode-erf-file.h \
 	runmode-ipfw.h \
-	runmode-napatech.h \
 	runmode-netmap.h \
 	runmode-nflog.h \
 	runmode-nfq.h \
 	runmode-pcap-file.h \
 	runmode-pcap.h \
-	runmode-pfring.h \
 	runmodes.h \
 	runmode-unittests.h \
 	runmode-unix-socket.h \
@@ -472,7 +420,6 @@ noinst_HEADERS = \
 	source-erf-dag.h \
 	source-erf-file.h \
 	source-ipfw.h \
-	source-napatech.h \
 	source-netmap.h \
 	source-nflog.h \
 	source-nfq.h \
@@ -481,7 +428,6 @@ noinst_HEADERS = \
 	source-pcap-file.h \
 	source-pcap-file-helper.h \
 	source-pcap.h \
-	source-pfring.h \
 	source-windivert.h \
 	source-windivert-prototypes.h \
 	stream.h \
@@ -496,6 +442,8 @@ noinst_HEADERS = \
 	suricata-common.h \
 	suricata.h \
 	suricata-plugin.h \
+	thread-callbacks.h \
+	thread-storage.h \
 	threads-debug.h \
 	threads.h \
 	threads-profile.h \
@@ -509,13 +457,11 @@ noinst_HEADERS = \
 	tm-threads-common.h \
 	tm-threads.h \
 	tree.h \
+	interval-tree.h \
 	unix-manager.h \
 	util-action.h \
 	util-affinity.h \
 	util-atomic.h \
-	util-base64.h \
-	util-bloomfilter-counting.h \
-	util-bloomfilter.h \
 	util-bpf.h \
 	util-buffer.h \
 	util-byte.h \
@@ -531,18 +477,20 @@ noinst_HEADERS = \
 	util-datalink.h \
 	util-debug-filters.h \
 	util-debug.h \
-	util-decode-mime.h \
 	util-detect.h \
 	util-device.h \
 	util-dpdk.h \
 	util-dpdk-i40e.h \
 	util-dpdk-ice.h \
 	util-dpdk-ixgbe.h \
+	util-dpdk-mlx5.h \
 	util-dpdk-bonding.h \
+	util-dpdk-rss.h \
 	util-ebpf.h \
 	util-enum.h \
 	util-error.h \
 	util-exception-policy.h \
+	util-exception-policy-types.h \
 	util-file-decompression.h \
 	util-file.h \
 	util-file-swf-decompression.h \
@@ -554,22 +502,29 @@ noinst_HEADERS = \
 	util-hash-string.h \
 	util-host-info.h \
 	util-host-os-info.h \
+	util-hugepages.h \
 	util-hyperscan.h \
 	util-ioctl.h \
 	util-ip.h \
 	util-ja3.h \
+	util-ja4.h \
 	util-landlock.h \
 	util-logopenfile.h \
 	util-log-redis.h \
+	util-lua-base64lib.h \
+	util-lua-builtins.h \
 	util-lua-common.h \
+	util-lua-dataset.h \
 	util-lua-dnp3.h \
 	util-lua-dnp3-objects.h \
 	util-lua-dns.h \
 	util-lua.h \
+	util-lua-hashlib.h \
 	util-lua-hassh.h \
 	util-lua-http.h \
 	util-lua-ja3.h \
-	util-luajit.h \
+	util-lua-packetlib.h \
+	util-lua-sandbox.h \
 	util-lua-smtp.h \
 	util-lua-ssh.h \
 	util-lua-tls.h \
@@ -584,7 +539,6 @@ noinst_HEADERS = \
 	util-mpm-ac-ks.h \
 	util-mpm.h \
 	util-mpm-hs.h \
-	util-napatech.h \
 	util-optimize.h \
 	util-pages.h \
 	util-path.h \
@@ -598,7 +552,9 @@ noinst_HEADERS = \
 	util-profiling.h \
 	util-profiling-locks.h \
 	util-proto-name.h \
-	util-radix-tree.h \
+	util-radix-tree-common.h \
+	util-radix4-tree.h \
+	util-radix6-tree.h \
 	util-random.h \
 	util-reference-config.h \
 	util-rohash.h \
@@ -615,6 +571,7 @@ noinst_HEADERS = \
 	util-streaming-buffer.h \
 	util-syslog.h \
 	util-sysfs.h \
+	util-systemd.h \
 	util-thash.h \
 	util-threshold-config.h \
 	util-time.h \
@@ -623,6 +580,7 @@ noinst_HEADERS = \
 	util-validate.h \
 	util-var.h \
 	util-var-name.h \
+	util-port-interval-tree.h \
 	win32-misc.h \
 	win32-service.h \
 	win32-syscall.h \
@@ -636,8 +594,6 @@ libsuricata_c_a_SOURCES = \
 	app-layer-detect-proto.c \
 	app-layer-dnp3.c \
 	app-layer-dnp3-objects.c \
-	app-layer-enip.c \
-	app-layer-enip-common.c \
 	app-layer-events.c \
 	app-layer-expectation.c \
 	app-layer-ftp.c \
@@ -651,24 +607,18 @@ libsuricata_c_a_SOURCES = \
 	app-layer-htp-xff.c \
 	app-layer-http2.c \
 	app-layer-ike.c \
-	app-layer-krb5.c \
 	app-layer-modbus.c \
-	app-layer-quic.c \
 	app-layer-nfs-tcp.c \
 	app-layer-nfs-udp.c \
-	app-layer-ntp.c \
 	app-layer-parser.c \
 	app-layer-protos.c \
-	app-layer-rdp.c \
 	app-layer-register.c \
-	app-layer-rfb.c \
-	app-layer-sip.c \
 	app-layer-smb.c \
 	app-layer-smtp.c \
-	app-layer-snmp.c \
 	app-layer-ssh.c \
 	app-layer-ssl.c \
 	app-layer-tftp.c \
+	app-layer-imap.c \
 	conf.c \
 	conf-yaml-loader.c \
 	counters.c \
@@ -679,6 +629,7 @@ libsuricata_c_a_SOURCES = \
 	datasets-sha256.c \
 	datasets-string.c \
 	decode.c \
+	decode-arp.c \
 	decode-chdlc.c \
 	decode-erspan.c \
 	decode-esp.c \
@@ -708,7 +659,7 @@ libsuricata_c_a_SOURCES = \
 	defrag.c \
 	defrag-config.c \
 	defrag-hash.c \
-	defrag-queue.c \
+	defrag-stack.c \
 	defrag-timeout.c \
 	detect-app-layer-event.c \
 	detect-app-layer-protocol.c \
@@ -723,7 +674,6 @@ libsuricata_c_a_SOURCES = \
 	detect-bytemath.c \
 	detect-bytetest.c \
 	detect.c \
-	detect-cipservice.c \
 	detect-classtype.c \
 	detect-config.c \
 	detect-content.c \
@@ -739,6 +689,8 @@ libsuricata_c_a_SOURCES = \
 	detect-dnp3.c \
 	detect-dns-answer-name.c \
 	detect-dns-opcode.c \
+	detect-dns-rcode.c \
+	detect-dns-rrtype.c \
 	detect-dns-query.c \
 	detect-dns-query-name.c \
 	detect-dsize.c \
@@ -751,10 +703,10 @@ libsuricata_c_a_SOURCES = \
 	detect-engine.c \
 	detect-engine-content-inspection.c \
 	detect-engine-dcepayload.c \
-	detect-engine-enip.c \
 	detect-engine-event.c \
 	detect-engine-file.c \
 	detect-engine-frame.c \
+	detect-engine-helper.c \
 	detect-engine-iponly.c \
 	detect-engine-loader.c \
 	detect-engine-mpm.c \
@@ -792,6 +744,7 @@ libsuricata_c_a_SOURCES = \
 	detect-frame.c \
 	detect-ftpbounce.c \
 	detect-ftpdata.c \
+	detect-ftp-command.c \
 	detect-geoip.c \
 	detect-gid.c \
 	detect-hostbits.c \
@@ -846,6 +799,7 @@ libsuricata_c_a_SOURCES = \
 	detect-ipv6hdr.c \
 	detect-isdataat.c \
 	detect-itype.c \
+	detect-ja4-hash.c \
 	detect-krb5-cname.c \
 	detect-krb5-errcode.c \
 	detect-krb5-msgtype.c \
@@ -862,23 +816,6 @@ libsuricata_c_a_SOURCES = \
 	detect-quic-version.c \
 	detect-quic-cyu-hash.c \
 	detect-quic-cyu-string.c \
-	detect-mqtt-connack-sessionpresent.c \
-	detect-mqtt-connect-clientid.c \
-	detect-mqtt-connect-flags.c \
-	detect-mqtt-connect-password.c \
-	detect-mqtt-connect-protocol-string.c \
-	detect-mqtt-connect-username.c \
-	detect-mqtt-connect-willmessage.c \
-	detect-mqtt-connect-willtopic.c \
-	detect-mqtt-flags.c \
-	detect-mqtt-protocol-version.c \
-	detect-mqtt-publish-message.c \
-	detect-mqtt-publish-topic.c \
-	detect-mqtt-qos.c \
-	detect-mqtt-reason-code.c \
-	detect-mqtt-subscribe-topic.c \
-	detect-mqtt-type.c \
-	detect-mqtt-unsubscribe-topic.c \
 	detect-msg.c \
 	detect-nfs-procedure.c \
 	detect-nfs-version.c \
@@ -896,28 +833,15 @@ libsuricata_c_a_SOURCES = \
 	detect-replace.c \
 	detect-requires.c \
 	detect-rev.c \
-	detect-rfb-name.c \
-	detect-rfb-secresult.c \
-	detect-rfb-sectype.c \
 	detect-rpc.c \
 	detect-sameip.c \
 	detect-sid.c \
 	detect-sip-method.c \
-	detect-sip-protocol.c \
-	detect-sip-request-line.c \
-	detect-sip-response-line.c \
-	detect-sip-stat-code.c \
-	detect-sip-stat-msg.c \
 	detect-sip-uri.c \
 	detect-smb-ntlmssp.c \
 	detect-smb-share.c \
-	detect-snmp-community.c \
-	detect-snmp-pdu_type.c \
-	detect-snmp-usm.c \
-	detect-snmp-version.c \
-	detect-dhcp-leasetime.c \
-	detect-dhcp-rebinding-time.c \
-	detect-dhcp-renewal-time.c \
+	detect-smb-version.c \
+	detect-smtp.c \
 	detect-ssh-hassh.c \
 	detect-ssh-hassh-server.c \
 	detect-ssh-hassh-server-string.c \
@@ -939,15 +863,16 @@ libsuricata_c_a_SOURCES = \
 	detect-tcp-window.c \
 	detect-template2.c \
 	detect-template.c \
-	detect-template-rust-buffer.c \
 	detect-threshold.c \
 	detect-tls.c \
+	detect-tls-alpn.c \
 	detect-tls-cert-fingerprint.c \
 	detect-tls-cert-issuer.c \
 	detect-tls-certs.c \
 	detect-tls-cert-serial.c \
 	detect-tls-cert-subject.c \
 	detect-tls-cert-validity.c \
+	detect-tls-subjectaltname.c \
 	detect-tls-ja3-hash.c \
 	detect-tls-ja3s-hash.c \
 	detect-tls-ja3s-string.c \
@@ -956,27 +881,20 @@ libsuricata_c_a_SOURCES = \
 	detect-tls-version.c \
 	detect-tls-random.c \
 	detect-tos.c \
-	detect-transform-casechange.c \
-	detect-transform-compress-whitespace.c \
-	detect-transform-dotprefix.c \
-	detect-transform-header-lowercase.c \
-	detect-transform-md5.c \
+	detect-transform-base64.c \
 	detect-transform-pcrexform.c \
-	detect-transform-sha1.c \
-	detect-transform-sha256.c \
-	detect-transform-strip-whitespace.c \
-	detect-transform-urldecode.c \
-	detect-transform-xor.c \
 	detect-ttl.c \
 	detect-udphdr.c \
 	detect-uricontent.c \
 	detect-urilen.c \
 	detect-within.c \
 	detect-xbits.c \
+	detect-vlan.c \
 	device-storage.c \
 	feature.c \
 	flow-bit.c \
 	flow-bypass.c \
+	flow-callbacks.c \
 	flow.c \
 	flow-hash.c \
 	flow-manager.c \
@@ -1012,7 +930,7 @@ libsuricata_c_a_SOURCES = \
 	output-flow.c \
 	output-json-alert.c \
 	output-json-anomaly.c \
-	output-json-bittorrent-dht.c \
+	output-json-arp.c \
 	output-json.c \
 	output-json-common.c \
 	output-json-dcerpc.c \
@@ -1026,28 +944,18 @@ libsuricata_c_a_SOURCES = \
 	output-json-flow.c \
 	output-json-frame.c \
 	output-json-ftp.c \
-	output-json-http2.c \
 	output-json-http.c \
 	output-json-ike.c \
-	output-json-krb5.c \
 	output-json-metadata.c \
-	output-json-modbus.c \
-	output-json-quic.c \
 	output-json-mqtt.c \
 	output-json-netflow.c \
 	output-json-nfs.c \
 	output-json-pgsql.c \
-	output-json-rdp.c \
-	output-json-rfb.c \
-	output-json-sip.c \
 	output-json-smb.c \
 	output-json-smtp.c \
-	output-json-snmp.c \
-	output-json-ssh.c \
 	output-json-stats.c \
-	output-json-template.c \
-	output-json-tftp.c \
 	output-json-tls.c \
+	output-eve.c \
 	output-eve-syslog.c \
 	output-eve-null.c \
 	output-lua.c \
@@ -1067,13 +975,11 @@ libsuricata_c_a_SOURCES = \
 	runmode-erf-dag.c \
 	runmode-erf-file.c \
 	runmode-ipfw.c \
-	runmode-napatech.c \
 	runmode-netmap.c \
 	runmode-nflog.c \
 	runmode-nfq.c \
 	runmode-pcap.c \
 	runmode-pcap-file.c \
-	runmode-pfring.c \
 	runmodes.c \
 	runmode-unittests.c \
 	runmode-unix-socket.c \
@@ -1085,7 +991,6 @@ libsuricata_c_a_SOURCES = \
 	source-erf-dag.c \
 	source-erf-file.c \
 	source-ipfw.c \
-	source-napatech.c \
 	source-netmap.c \
 	source-nflog.c \
 	source-nfq.c \
@@ -1093,7 +998,6 @@ libsuricata_c_a_SOURCES = \
 	source-pcap-file.c \
 	source-pcap-file-directory-helper.c \
 	source-pcap-file-helper.c \
-	source-pfring.c \
 	source-windivert.c \
 	stream.c \
 	stream-tcp.c \
@@ -1104,6 +1008,8 @@ libsuricata_c_a_SOURCES = \
 	stream-tcp-sack.c \
 	stream-tcp-util.c \
 	suricata.c \
+	thread-callbacks.c \
+	thread-storage.c \
 	threads.c \
 	tm-modules.c \
 	tmqh-flow.c \
@@ -1116,9 +1022,6 @@ libsuricata_c_a_SOURCES = \
 	util-action.c \
 	util-affinity.c \
 	util-atomic.c \
-	util-base64.c \
-	util-bloomfilter.c \
-	util-bloomfilter-counting.c \
 	util-bpf.c \
 	util-buffer.c \
 	util-byte.c \
@@ -1132,14 +1035,15 @@ libsuricata_c_a_SOURCES = \
 	util-datalink.c \
 	util-debug.c \
 	util-debug-filters.c \
-	util-decode-mime.c \
 	util-detect.c \
 	util-device.c \
 	util-dpdk.c \
 	util-dpdk-i40e.c \
 	util-dpdk-ice.c \
 	util-dpdk-ixgbe.c \
+	util-dpdk-mlx5.c \
 	util-dpdk-bonding.c \
+	util-dpdk-rss.c \
 	util-ebpf.c \
 	util-enum.c \
 	util-error.c \
@@ -1155,6 +1059,7 @@ libsuricata_c_a_SOURCES = \
 	util-hash-string.c \
 	util-host-info.c \
 	util-host-os-info.c \
+	util-hugepages.c \
 	util-hyperscan.c \
 	util-ioctl.c \
 	util-ip.c \
@@ -1163,14 +1068,19 @@ libsuricata_c_a_SOURCES = \
 	util-logopenfile.c \
 	util-log-redis.c \
 	util-lua.c \
+	util-lua-base64lib.c \
+	util-lua-builtins.c \
 	util-lua-common.c \
+	util-lua-dataset.c \
 	util-lua-dnp3.c \
 	util-lua-dnp3-objects.c \
 	util-lua-dns.c \
+	util-lua-hashlib.c \
 	util-lua-hassh.c \
 	util-lua-http.c \
 	util-lua-ja3.c \
-	util-luajit.c \
+	util-lua-packetlib.c \
+	util-lua-sandbox.c \
 	util-lua-smtp.c \
 	util-lua-ssh.c \
 	util-lua-tls.c \
@@ -1185,7 +1095,6 @@ libsuricata_c_a_SOURCES = \
 	util-mpm-ac-ks-small.c \
 	util-mpm.c \
 	util-mpm-hs.c \
-	util-napatech.c \
 	util-pages.c \
 	util-path.c \
 	util-pidfile.c \
@@ -1202,7 +1111,8 @@ libsuricata_c_a_SOURCES = \
 	util-profiling-rulegroups.c \
 	util-profiling-rules.c \
 	util-proto-name.c \
-	util-radix-tree.c \
+	util-radix4-tree.c \
+	util-radix6-tree.c \
 	util-random.c \
 	util-reference-config.c \
 	util-rohash.c \
@@ -1222,6 +1132,7 @@ libsuricata_c_a_SOURCES = \
 	util-strptime.c \
 	util-syslog.c \
 	util-sysfs.c \
+	util-systemd.c \
 	util-thash.c \
 	util-threshold-config.c \
 	util-time.c \
@@ -1229,6 +1140,7 @@ libsuricata_c_a_SOURCES = \
 	util-unittest-helper.c \
 	util-var.c \
 	util-var-name.c \
+	util-port-interval-tree.c \
 	win32-misc.c \
 	win32-service.c \
 	win32-syscall.c
@@ -1245,11 +1157,8 @@ EXTRA_DIST = \
 	tests/detect-http2.c \
 	tests/detect-icmpv6-mtu.c \
 	tests/detect-icmpv6hdr.c \
-	tests/detect-snmp-pdu_type.c \
-	tests/detect-snmp-version.c \
 	tests/detect-template.c \
 	tests/detect-transform-pcrexform.c \
-	tests/detect-transform-xor.c \
 	tests/detect-ttl.c \
 	tests/source-pcap.c \
 	tests/app-layer-htp-file.c \
@@ -1270,10 +1179,8 @@ EXTRA_DIST = \
 	tests/detect-http-stat-msg.c \
 	tests/detect-http-uri.c \
 	tests/detect-http-user-agent.c \
-	tests/detect-snmp-community.c \
 	tests/detect-ssl-state.c \
 	tests/detect-ssl-version.c \
-	tests/detect-template-buffer.c \
 	tests/detect-tls-cert-fingerprint.c \
 	tests/detect-tls-cert-issuer.c \
 	tests/detect-tls-cert-serial.c \
@@ -1283,13 +1190,24 @@ EXTRA_DIST = \
 	tests/detect-tls-version.c \
 	tests/detect-ipaddr.c \
 	tests/detect.c \
-	tests/stream-tcp.c
+	tests/stream-tcp.c \
+	tests/output-json-stats.c
 
 install-headers:
 	mkdir -p $(DESTDIR)${includedir}/suricata
 	for header in $(noinst_HEADERS); do \
 		$(INSTALL_DATA) $$header "$(DESTDIR)${includedir}/suricata"; \
 	done
+	if test -e ../rust/dist/rust-bindings.h; then \
+		$(INSTALL_DATA) ../rust/dist/rust-bindings.h "$(DESTDIR)${includedir}/suricata"; \
+	fi
+	if test -e ../rust/gen/rust-bindings.h; then \
+		$(INSTALL_DATA) ../rust/gen/rust-bindings.h "$(DESTDIR)${includedir}/suricata"; \
+	fi
+
+# Until we can remove autoconf.h from our headers, we need to to
+# provide this for library/plugin users.
+	$(INSTALL_DATA) autoconf.h "$(DESTDIR)${includedir}/suricata"
 
 # set the include path found by configure
 AM_CPPFLAGS = $(all_includes)
@@ -1300,7 +1218,13 @@ suricata_SOURCES = main.c
 
 # the library search path.
 suricata_LDFLAGS = $(all_libraries) ${SECLDFLAGS}
-suricata_LDADD = libsuricata_c.a $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+# rust library depends also on c
+if LINKER_SUPPORTS_GROUP
+LDADD_GENERIC = "-Wl,--start-group,libsuricata_c.a,$(RUST_SURICATA_LIB),--end-group" $(HTP_LDADD) $(RUST_LDADD)
+else
+LDADD_GENERIC = libsuricata_c.a $(RUST_SURICATA_LIB) libsuricata_c.a $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+endif
+suricata_LDADD = $(LDADD_GENERIC)
 suricata_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 
 if BUILD_SHARED_LIBRARY
@@ -1336,11 +1260,12 @@ uninstall-local:
 if BUILD_FUZZTARGETS
 
 LDFLAGS_FUZZ = $(all_libraries) $(SECLDFLAGS)
-LDADD_FUZZ = libsuricata_c.a $(RUST_SURICATA_LIB) $(HTP_LDADD) $(RUST_LDADD)
+LDADD_FUZZ = $(LDADD_GENERIC)
 
-fuzz_applayerprotodetectgetproto_SOURCES = tests/fuzz/fuzz_applayerprotodetectgetproto.c
+fuzz_applayerprotodetectgetproto_SOURCES = tests/fuzz/fuzz_applayerprotodetectgetproto.c tests/fuzz/confyaml.c
 fuzz_applayerprotodetectgetproto_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_applayerprotodetectgetproto_LDADD = $(LDADD_FUZZ)
+fuzz_applayerprotodetectgetproto_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_applayerprotodetectgetproto_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1349,9 +1274,10 @@ endif
 # force usage of CXX for linker
 nodist_EXTRA_fuzz_applayerprotodetectgetproto_SOURCES = force-cxx-linking.cxx
 
-fuzz_applayerparserparse_SOURCES = tests/fuzz/fuzz_applayerparserparse.c
+fuzz_applayerparserparse_SOURCES = tests/fuzz/fuzz_applayerparserparse.c tests/fuzz/confyaml.c
 fuzz_applayerparserparse_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_applayerparserparse_LDADD = $(LDADD_FUZZ)
+fuzz_applayerparserparse_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_applayerparserparse_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1363,6 +1289,7 @@ nodist_EXTRA_fuzz_applayerparserparse_SOURCES = force-cxx-linking.cxx
 fuzz_siginit_SOURCES = tests/fuzz/fuzz_siginit.c
 fuzz_siginit_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_siginit_LDADD = $(LDADD_FUZZ)
+fuzz_siginit_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_siginit_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1374,6 +1301,7 @@ nodist_EXTRA_fuzz_siginit_SOURCES = force-cxx-linking.cxx
 fuzz_confyamlloadstring_SOURCES = tests/fuzz/fuzz_confyamlloadstring.c
 fuzz_confyamlloadstring_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_confyamlloadstring_LDADD = $(LDADD_FUZZ)
+fuzz_confyamlloadstring_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_confyamlloadstring_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1385,6 +1313,7 @@ nodist_EXTRA_fuzz_confyamlloadstring_SOURCES = force-cxx-linking.cxx
 fuzz_decodepcapfile_SOURCES = tests/fuzz/fuzz_decodepcapfile.c
 fuzz_decodepcapfile_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_decodepcapfile_LDADD = $(LDADD_FUZZ)
+fuzz_decodepcapfile_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_decodepcapfile_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1393,9 +1322,10 @@ endif
 # force usage of CXX for linker
 nodist_EXTRA_fuzz_decodepcapfile_SOURCES = force-cxx-linking.cxx
 
-fuzz_sigpcap_SOURCES = tests/fuzz/fuzz_sigpcap.c
+fuzz_sigpcap_SOURCES = tests/fuzz/fuzz_sigpcap.c tests/fuzz/confyaml.c
 fuzz_sigpcap_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_sigpcap_LDADD = $(LDADD_FUZZ)
+fuzz_sigpcap_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_sigpcap_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1405,9 +1335,10 @@ endif
 nodist_EXTRA_fuzz_sigpcap_SOURCES = force-cxx-linking.cxx
 
 if HAS_FUZZPCAP
-fuzz_sigpcap_aware_SOURCES = tests/fuzz/fuzz_sigpcap_aware.c
+fuzz_sigpcap_aware_SOURCES = tests/fuzz/fuzz_sigpcap_aware.c tests/fuzz/confyaml.c
 fuzz_sigpcap_aware_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_sigpcap_aware_LDADD = $(LDADD_FUZZ) -lfuzzpcap
+fuzz_sigpcap_aware_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_sigpcap_aware_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1416,9 +1347,10 @@ endif
 # force usage of CXX for linker
 nodist_EXTRA_fuzz_sigpcap_aware_SOURCES = force-cxx-linking.cxx
 
-fuzz_predefpcap_aware_SOURCES = tests/fuzz/fuzz_predefpcap_aware.c
+fuzz_predefpcap_aware_SOURCES = tests/fuzz/fuzz_predefpcap_aware.c tests/fuzz/confyaml.c
 fuzz_predefpcap_aware_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_predefpcap_aware_LDADD = $(LDADD_FUZZ) -lfuzzpcap
+fuzz_predefpcap_aware_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_predefpcap_aware_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1428,9 +1360,22 @@ endif
 nodist_EXTRA_fuzz_predefpcap_aware_SOURCES = force-cxx-linking.cxx
 endif
 
+fuzz_decodebase64_SOURCES = tests/fuzz/fuzz_decodebase64.c
+fuzz_decodebase64_LDFLAGS = $(LDFLAGS_FUZZ)
+fuzz_decodebase64_LDADD = $(LDADD_FUZZ)
+fuzz_decodebase64_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
+if HAS_FUZZLDFLAGS
+    fuzz_decodebase64_LDFLAGS += $(LIB_FUZZING_ENGINE)
+else
+    fuzz_decodebase64_SOURCES += tests/fuzz/onefile.c
+endif
+# force usage of CXX for linker
+nodist_EXTRA_fuzz_decodebase64_SOURCES = force-cxx-linking.cxx
+
 fuzz_mimedecparseline_SOURCES = tests/fuzz/fuzz_mimedecparseline.c
 fuzz_mimedecparseline_LDFLAGS = $(LDFLAGS_FUZZ)
 fuzz_mimedecparseline_LDADD = $(LDADD_FUZZ)
+fuzz_mimedecparseline_DEPENDENCIES = libsuricata_c.a $(RUST_SURICATA_LIB)
 if HAS_FUZZLDFLAGS
     fuzz_mimedecparseline_LDFLAGS += $(LIB_FUZZING_ENGINE)
 else
@@ -1442,7 +1387,7 @@ endif
 
 # default CFLAGS
 AM_CFLAGS = ${OPTIMIZATION_CFLAGS} ${GCC_CFLAGS} ${CLANG_CFLAGS}            \
-    ${SECCFLAGS} ${PCAP_CFLAGS} -DLOCAL_STATE_DIR=\"$(localstatedir)\"      \
+    ${SECCFLAGS} ${PCAP_CFLAGS}      										\
     -Wall -Wno-unused-parameter -Wmissing-prototypes -Wmissing-declarations \
     -Wstrict-prototypes -Wwrite-strings -Wbad-function-cast                 \
     -Wformat-security -Wno-format-nonliteral -Wmissing-format-attribute     \

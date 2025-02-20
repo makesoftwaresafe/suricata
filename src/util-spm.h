@@ -21,8 +21,8 @@
  * \author Pablo Rincon Crespo <pablo.rincon.crespo@gmail.com>
  */
 
-#ifndef __UTIL_SPM_H__
-#define __UTIL_SPM_H__
+#ifndef SURICATA_UTIL_SPM_H
+#define SURICATA_UTIL_SPM_H
 
 #include "util-spm-bs.h"
 
@@ -90,8 +90,8 @@ uint8_t *SpmScan(const SpmCtx *ctx, SpmThreadCtx *thread_ctx,
                  const uint8_t *haystack, uint32_t haystack_len);
 
 /** Default algorithm to use: Boyer Moore */
-uint8_t *Bs2bmSearch(const uint8_t *text, uint32_t textlen, const uint8_t *needle, uint16_t needlelen);
-uint8_t *Bs2bmNocaseSearch(const uint8_t *text, uint32_t textlen, const uint8_t *needle, uint16_t needlelen);
+uint8_t *Bs2bmSearch(
+        const uint8_t *text, uint32_t textlen, const uint8_t *needle, uint16_t needlelen);
 uint8_t *BoyerMooreSearch(const uint8_t *text, uint32_t textlen, const uint8_t *needle, uint16_t needlelen);
 uint8_t *BoyerMooreNocaseSearch(const uint8_t *text, uint32_t textlen, uint8_t *needle, uint16_t needlelen);
 
@@ -121,4 +121,4 @@ uint8_t *BoyerMooreNocaseSearch(const uint8_t *text, uint32_t textlen, uint8_t *
 #ifdef UNITTESTS
 void UtilSpmSearchRegistertests(void);
 #endif
-#endif /* __UTIL_SPM_H__ */
+#endif /* SURICATA_UTIL_SPM_H */

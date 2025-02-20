@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_TIME_H__
-#define __UTIL_TIME_H__
+#ifndef SURICATA_UTIL_TIME_H
+#define SURICATA_UTIL_TIME_H
 
 /*
  * The SCTime_t member is broken up as
@@ -53,8 +53,8 @@ typedef struct {
     {                                                                                              \
         .secs = 0, .usecs = 0                                                                      \
     }
-#define SCTIME_USECS(t)          ((uint64_t)(t).usecs)
-#define SCTIME_SECS(t)           ((uint64_t)(t).secs)
+#define SCTIME_USECS(t)          ((t).usecs)
+#define SCTIME_SECS(t)           ((t).secs)
 #define SCTIME_MSECS(t)          (SCTIME_SECS(t) * 1000 + SCTIME_USECS(t) / 1000)
 #define SCTIME_ADD_USECS(ts, us)                                                                   \
     (SCTime_t)                                                                                     \
@@ -105,6 +105,14 @@ typedef struct {
 #define SCTIME_CMP_LT(a, b)  SCTIME_CMP((a), (b), <)
 #define SCTIME_CMP_LTE(a, b) SCTIME_CMP((a), (b), <=)
 #define SCTIME_CMP_NEQ(a, b) SCTIME_CMP((a), (b), !=)
+#define SCTIME_CMP_EQ(a, b)  SCTIME_CMP((a), (b), ==)
+
+static inline SCTime_t SCTimeGetTime(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return SCTIME_FROM_TIMEVAL(&tv);
+}
 
 void TimeInit(void);
 void TimeDeinit(void);
@@ -114,15 +122,6 @@ SCTime_t TimeGet(void);
 
 /** \brief initialize a 'struct timespec' from a 'struct timeval'. */
 #define FROM_TIMEVAL(timev) { .tv_sec = (timev).tv_sec, .tv_nsec = (timev).tv_usec * 1000 }
-
-/** \brief compare two 'struct timeval' and return if the first is earlier than the second */
-static inline bool TimevalEarlier(struct timeval *first, struct timeval *second)
-{
-    /* from man timercmp on Linux: "Some systems (but not Linux/glibc), have a broken timercmp()
-     * implementation, in which CMP of >=, <=, and == do not work; portable applications can instead
-     * use ... !timercmp(..., >) */
-    return !timercmp(first, second, >);
-}
 
 #ifndef timeradd
 #define timeradd(a, b, r)                                                                          \
@@ -162,5 +161,4 @@ uint64_t SCGetSecondsUntil (const char *str, time_t epoch);
 uint64_t SCTimespecAsEpochMillis(const struct timespec *ts);
 uint64_t TimeDifferenceMicros(struct timeval t0, struct timeval t1);
 
-#endif /* __UTIL_TIME_H__ */
-
+#endif /* SURICATA_UTIL_TIME_H */

@@ -45,6 +45,8 @@ static TmEcode PcapDirectoryPopulateBuffer(PcapFileDirectoryVars *ptv,
 static TmEcode PcapDirectoryDispatchForTimeRange(PcapFileDirectoryVars *pv,
                                                  struct timespec *older_than);
 
+extern PcapFileGlobalVars pcap_g;
+
 void GetTime(struct timespec *tm)
 {
     struct timeval now;
@@ -414,7 +416,8 @@ TmEcode PcapDirectoryDispatchForTimeRange(PcapFileDirectoryVars *pv,
             } else {
                 SCLogDebug("Processing file %s", current_file->filename);
 
-                PcapFileFileVars *pftv = SCCalloc(1, sizeof(PcapFileFileVars));
+                const size_t toalloc = sizeof(PcapFileFileVars) + pcap_g.read_buffer_size;
+                PcapFileFileVars *pftv = SCCalloc(1, toalloc);
                 if (unlikely(pftv == NULL)) {
                     SCLogError("Failed to allocate PcapFileFileVars");
                     SCReturnInt(TM_ECODE_FAILED);
@@ -483,7 +486,15 @@ TmEcode PcapDirectoryDispatch(PcapFileDirectoryVars *ptv)
     struct timespec older_than;
     memset(&older_than, 0, sizeof(struct timespec));
     older_than.tv_sec = LONG_MAX;
-    uint32_t poll_seconds = (uint32_t)localtime(&ptv->poll_interval)->tm_sec;
+    uint32_t poll_seconds;
+#ifndef OS_WIN32
+    struct tm safe_tm;
+    memset(&safe_tm, 0, sizeof(safe_tm));
+    poll_seconds = (uint32_t)localtime_r(&ptv->poll_interval, &safe_tm)->tm_sec;
+#else
+    /* windows localtime is threadsafe */
+    poll_seconds = (uint32_t)localtime(&ptv->poll_interval)->tm_sec;
+#endif
 
     if (ptv->should_loop) {
         GetTime(&older_than);

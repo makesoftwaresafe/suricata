@@ -23,8 +23,8 @@
  * LiveDevice wrapper around storage api
  */
 
-#ifndef __DEVICE_STORAGE_H__
-#define __DEVICE_STORAGE_H__
+#ifndef SURICATA_DEVICE_STORAGE_H
+#define SURICATA_DEVICE_STORAGE_H
 
 #include "util-device.h"
 
@@ -36,12 +36,10 @@ unsigned int LiveDevStorageSize(void);
 
 void *LiveDevGetStorageById(LiveDevice *d, LiveDevStorageId id);
 int LiveDevSetStorageById(LiveDevice *d, LiveDevStorageId id, void *ptr);
-void *LiveDevAllocStorageById(LiveDevice *d, LiveDevStorageId id);
 
-void LiveDevFreeStorageById(LiveDevice *d, LiveDevStorageId id);
 void LiveDevFreeStorage(LiveDevice *d);
 
 LiveDevStorageId LiveDevStorageRegister(const char *name, const unsigned int size,
         void *(*Alloc)(unsigned int), void (*Free)(void *));
 
-#endif /* __DEVICE_STORAGE_H__ */
+#endif /* SURICATA_DEVICE_STORAGE_H */

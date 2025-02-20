@@ -50,7 +50,7 @@
 #include "suricata.h"
 #include "util-bpf.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 const char *RunModeNetmapGetDefaultMode(void)
 {
@@ -79,20 +79,22 @@ static int NetmapRunModeIsIPS(void)
         const char *live_dev = LiveGetDeviceName(ldev);
         if (live_dev == NULL) {
             SCLogError("Problem with config file");
-            return 0;
+            return -1;
         }
-        const char *copymodestr = NULL;
         if_root = ConfNodeLookupKeyValue(netmap_node, "interface", live_dev);
 
         if (if_root == NULL) {
             if (if_default == NULL) {
                 SCLogError("Problem with config file");
-                return 0;
+                return -1;
             }
             if_root = if_default;
         }
 
-        if (ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) == 1) {
+        const char *copymodestr = NULL;
+        const char *copyifacestr = NULL;
+        if (ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) == 1 &&
+                ConfGetChildValue(if_root, "copy-iface", &copyifacestr) == 1) {
             if (strcmp(copymodestr, "ips") == 0) {
                 has_ips = 1;
             } else {
@@ -104,44 +106,22 @@ static int NetmapRunModeIsIPS(void)
     }
 
     if (has_ids && has_ips) {
-        SCLogWarning("Netmap using both IPS and TAP/IDS mode, this will not be "
-                     "allowed in Suricata 8 due to undefined behavior. See ticket #5588.");
-        for (ldev = 0; ldev < nlive; ldev++) {
-            const char *live_dev = LiveGetDeviceName(ldev);
-            if (live_dev == NULL) {
-                SCLogError("Problem with config file");
-                return 0;
-            }
-            if_root = ConfNodeLookupKeyValue(netmap_node, "interface", live_dev);
-            const char *copymodestr = NULL;
-
-            if (if_root == NULL) {
-                if (if_default == NULL) {
-                    SCLogError("Problem with config file");
-                    return 0;
-                }
-                if_root = if_default;
-            }
-
-            if (!((ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) ==
-                          1) &&
-                        (strcmp(copymodestr, "ips") == 0))) {
-                SCLogError("Netmap IPS mode used and interface '%s' is in IDS or TAP mode. "
-                           "Sniffing '%s' but expect bad result as stream-inline is activated.",
-                        live_dev, live_dev);
-            }
-        }
+        SCLogError("using both IPS and TAP/IDS mode is not allowed due to undefined behavior. See "
+                   "ticket #5588.");
+        return -1;
     }
 
     return has_ips;
 }
 
-static void NetmapRunModeEnableIPS(void)
+static int NetmapRunModeEnableIPS(void)
 {
-    if (NetmapRunModeIsIPS()) {
+    int r = NetmapRunModeIsIPS();
+    if (r == 1) {
         SCLogInfo("Netmap: Setting IPS mode");
         EngineModeSetIPS();
     }
+    return r;
 }
 
 void RunModeIdsNetmapRegister(void)
@@ -157,7 +137,6 @@ void RunModeIdsNetmapRegister(void)
             "each flow are assigned to a single detect "
             "thread.",
             RunModeIdsNetmapAutoFp, NetmapRunModeEnableIPS);
-    return;
 }
 
 #ifdef HAVE_NETMAP
@@ -238,7 +217,7 @@ static int ParseNetmapSettings(NetmapIfaceSettings *ns, const char *iface,
     ConfSetBPFFilter(if_root, if_default, iface, &ns->bpf_filter);
 
     int boolval = 0;
-    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", (int *)&boolval);
+    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", &boolval);
     if (boolval) {
         SCLogInfo("%s: disabling promiscuous mode", ns->iface);
         ns->promisc = false;
@@ -344,7 +323,9 @@ static void *ParseNetmapConfig(const char *iface_name)
         }
     }
 
-    int ring_count = NetmapGetRSSCount(aconf->iface_name);
+    int ring_count = 0;
+    if (aconf->in.real)
+        ring_count = NetmapGetRSSCount(aconf->iface_name);
     if (strlen(aconf->iface_name) > 0 &&
             (aconf->iface_name[strlen(aconf->iface_name) - 1] == '^' ||
                     aconf->iface_name[strlen(aconf->iface_name) - 1] == '*')) {

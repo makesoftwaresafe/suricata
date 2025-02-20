@@ -268,13 +268,6 @@ void PoolFree(Pool *p)
     SCFree(p);
 }
 
-void PoolPrint(Pool *p)
-{
-    printf("\n----------- Hash Table Stats ------------\n");
-    printf("Buckets:               %" PRIu32 "\n", p->empty_stack_size + p->alloc_stack_size);
-    printf("-----------------------------------------\n");
-}
-
 void *PoolGet(Pool *p)
 {
     SCEnter();
@@ -373,18 +366,6 @@ void PoolReturn(Pool *p, void *data)
     SCReturn;
 }
 
-void PoolPrintSaturation(Pool *p)
-{
-    if (p->max_buckets > 0) {
-        SCLogDebug("pool %p is using %" PRIu32 " out of %" PRIu32 " items (%02.1f%%), max %" PRIu32
-                   " (%02.1f%%): pool struct memory %" PRIu64 ".",
-                p, p->outstanding, p->max_buckets,
-                (float)(p->outstanding) / (float)(p->max_buckets) * 100, p->max_outstanding,
-                (float)(p->max_outstanding) / (float)(p->max_buckets) * 100,
-                (uint64_t)(p->max_buckets * sizeof(PoolBucket)));
-    }
-}
-
 /*
  * ONLY TESTS BELOW THIS COMMENT
  */
@@ -408,7 +389,6 @@ static int PoolTestInitArg(void *data, void *allocdata)
 
 static void PoolTestFree(void *ptr)
 {
-    return;
 }
 
 static int PoolTestInit01 (void)

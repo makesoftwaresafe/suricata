@@ -15,13 +15,9 @@
  * 02110-1301, USA.
  */
 
-#ifndef __UTIL_LUA_SMTP_H__
-#define __UTIL_LUA_SMTP_H__
-
-#ifdef HAVE_LUA
+#ifndef SURICATA_UTIL_LUA_SMTP_H
+#define SURICATA_UTIL_LUA_SMTP_H
 
 int LuaRegisterSmtpFunctions(lua_State *luastate);
 
-#endif /* HAVE_LUA */
-
-#endif /* __UTIL_LUA_SMTP_H__ */
+#endif /* SURICATA_UTIL_LUA_SMTP_H */

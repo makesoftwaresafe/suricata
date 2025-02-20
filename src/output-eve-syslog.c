@@ -26,6 +26,7 @@
 
 #include "suricata-common.h" /* errno.h, string.h, etc. */
 #include "output.h"          /* DEFAULT_LOG_* */
+#include "output-eve.h"
 #include "output-eve-syslog.h"
 #include "util-syslog.h"
 
@@ -40,7 +41,7 @@ typedef struct Context_ {
     int alert_syslog_level;
 } Context;
 
-static int SyslogInit(ConfNode *conf, bool threaded, void **init_data)
+static int SyslogInit(const ConfNode *conf, const bool threaded, void **init_data)
 {
     Context *context = SCCalloc(1, sizeof(Context));
     if (context == NULL) {
@@ -78,9 +79,10 @@ static int SyslogInit(ConfNode *conf, bool threaded, void **init_data)
     return 0;
 }
 
-static int SyslogWrite(const char *buffer, int buffer_len, void *init_data, void *thread_data)
+static int SyslogWrite(
+        const char *buffer, const int buffer_len, const void *init_data, void *thread_data)
 {
-    Context *context = init_data;
+    const Context *context = init_data;
     syslog(context->alert_syslog_level, "%s", (const char *)buffer);
 
     return 0;

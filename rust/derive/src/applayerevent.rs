@@ -41,7 +41,7 @@ pub fn derive_app_layer_event(input: TokenStream) -> TokenStream {
                 let cname = format!("{}\0", event_name);
                 event_names.push(event_name);
                 event_cstrings.push(cname);
-                event_ids.push(i as i32);
+                event_ids.push(i as u8);
             }
         }
         _ => panic!("AppLayerEvent can only be derived for enums"),
@@ -60,14 +60,14 @@ pub fn derive_app_layer_event(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         impl #crate_id::applayer::AppLayerEvent for #name {
-            fn from_id(id: i32) -> Option<#name> {
+            fn from_id(id: u8) -> Option<#name> {
                 match id {
                     #( #event_ids => Some(#name::#fields) ,)*
                     _ => None,
                 }
             }
 
-            fn as_i32(&self) -> i32 {
+            fn as_u8(&self) -> u8 {
                 match *self {
                     #( #name::#fields => #event_ids ,)*
                 }
@@ -88,17 +88,17 @@ pub fn derive_app_layer_event(input: TokenStream) -> TokenStream {
 
             unsafe extern "C" fn get_event_info(
                 event_name: *const std::os::raw::c_char,
-                event_id: *mut std::os::raw::c_int,
+                event_id: *mut u8,
                 event_type: *mut #crate_id::core::AppLayerEventType,
             ) -> std::os::raw::c_int {
                 #crate_id::applayer::get_event_info::<#name>(event_name, event_id, event_type)
             }
 
             unsafe extern "C" fn get_event_info_by_id(
-                event_id: std::os::raw::c_int,
+                event_id: u8,
                 event_name: *mut *const std::os::raw::c_char,
                 event_type: *mut #crate_id::core::AppLayerEventType,
-            ) -> i8 {
+            ) -> std::os::raw::c_int {
                 #crate_id::applayer::get_event_info_by_id::<#name>(event_id, event_name, event_type)
             }
 
@@ -110,6 +110,9 @@ pub fn derive_app_layer_event(input: TokenStream) -> TokenStream {
 
 /// Transform names such as "OneTwoThree" to "one_two_three".
 pub fn transform_name(in_name: &str) -> String {
+    if in_name.to_uppercase() == in_name {
+        return in_name.to_lowercase();
+    }
     let mut out = String::new();
     for (i, c) in in_name.chars().enumerate() {
         if i == 0 {
@@ -159,5 +162,7 @@ mod test {
             transform_name("UnassignedMsgType"),
             "unassigned_msg_type".to_string()
         );
+        assert_eq!(transform_name("SAMECASE"), "samecase".to_string());
+        assert_eq!(transform_name("ZFlagSet"), "z_flag_set".to_string());
     }
 }

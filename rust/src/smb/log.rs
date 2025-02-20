@@ -38,7 +38,7 @@ fn debug_add_progress(jsb: &mut JsonBuilder, tx: &SMBTransaction) -> Result<(), 
 
 /// take in a file GUID (16 bytes) or FID (2 bytes). Also deal
 /// with our frankenFID (2 bytes + 4 user_id)
-fn fuid_to_string(fuid: &Vec<u8>) -> String {
+fn fuid_to_string(fuid: &[u8]) -> String {
     let fuid_len = fuid.len();
     if fuid_len == 16 {
         guid_to_string(fuid)
@@ -52,7 +52,7 @@ fn fuid_to_string(fuid: &Vec<u8>) -> String {
     }
 }
 
-fn guid_to_string(guid: &Vec<u8>) -> String {
+fn guid_to_string(guid: &[u8]) -> String {
     if guid.len() == 16 {
         let output = format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
                 guid[3],  guid[2],  guid[1],  guid[0],
@@ -253,10 +253,10 @@ fn smb_common_header(jsb: &mut JsonBuilder, state: &SMBState, tx: &SMBTransactio
             jsb.set_string("server_guid", &guid_to_string(&x.server_guid))?;
 
             if state.max_read_size > 0 {
-                jsb.set_uint("max_read_size", state.max_read_size.into())?;
+                jsb.set_uint("max_read_size", state.max_read_size)?;
             }
             if state.max_write_size > 0 {
-                jsb.set_uint("max_write_size", state.max_write_size.into())?;
+                jsb.set_uint("max_write_size", state.max_write_size)?;
             }
         },
         Some(SMBTransactionTypeData::TREECONNECT(ref x)) => {
@@ -445,13 +445,13 @@ fn smb_common_header(jsb: &mut JsonBuilder, state: &SMBState, tx: &SMBTransactio
 }
 
 #[no_mangle]
-pub extern "C" fn rs_smb_log_json_request(jsb: &mut JsonBuilder, state: &mut SMBState, tx: &mut SMBTransaction) -> bool
+pub extern "C" fn rs_smb_log_json_request(jsb: &mut JsonBuilder, state: &mut SMBState, tx: &SMBTransaction) -> bool
 {
     smb_common_header(jsb, state, tx).is_ok()
 }
 
 #[no_mangle]
-pub extern "C" fn rs_smb_log_json_response(jsb: &mut JsonBuilder, state: &mut SMBState, tx: &mut SMBTransaction) -> bool
+pub extern "C" fn rs_smb_log_json_response(jsb: &mut JsonBuilder, state: &mut SMBState, tx: &SMBTransaction) -> bool
 {
     smb_common_header(jsb, state, tx).is_ok()
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2022 Open Information Security Foundation
+/* Copyright (C) 2022-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,9 +21,10 @@
  * \author Juliana Fajardini <jufajardini@oisf.net>
  */
 
-#ifndef __OUTPUT_JSON_PGSQL_H__
-#define __OUTPUT_JSON_PGSQL_H__
+#ifndef SURICATA_OUTPUT_JSON_PGSQL_H
+#define SURICATA_OUTPUT_JSON_PGSQL_H
 
 void JsonPgsqlLogRegister(void);
+bool JsonPgsqlAddMetadata(void *vtx, JsonBuilder *jb);
 
-#endif /* __OUTPUT_JSON_PGSQL_H__ */
+#endif /* SURICATA_OUTPUT_JSON_PGSQL_H */

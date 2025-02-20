@@ -22,8 +22,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_ENGINE_CONTENT_INSPECTION_H__
-#define __DETECT_ENGINE_CONTENT_INSPECTION_H__
+#ifndef SURICATA_DETECT_ENGINE_CONTENT_INSPECTION_H
+#define SURICATA_DETECT_ENGINE_CONTENT_INSPECTION_H
 
 /** indication to content engine what type of data
  *  we're inspecting
@@ -68,6 +68,12 @@ bool DetectEngineContentInspectionBuffer(DetectEngineCtx *de_ctx, DetectEngineTh
         const Signature *s, const SigMatchData *smd, Packet *p, Flow *f, const InspectionBuffer *b,
         const enum DetectContentInspectionType inspection_mode);
 
+/** \brief tells if we should match on absent buffer, because
+ *  there is an absent keyword being used
+ *  \param smd array of content inspection matches
+ *  \retval bool true to match on absent buffer, false otherwise */
+bool DetectContentInspectionMatchOnAbsentBuffer(const SigMatchData *smd);
+
 void DetectEngineContentInspectionRegisterTests(void);
 
-#endif /* __DETECT_ENGINE_CONTENT_INSPECTION_H__ */
+#endif /* SURICATA_DETECT_ENGINE_CONTENT_INSPECTION_H */

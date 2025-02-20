@@ -15,7 +15,8 @@
 * 02110-1301, USA.
 */
 use crate::applayer::{self, *};
-use crate::core::{self, AppProto, ALPROTO_FAILED, ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::core::{ALPROTO_FAILED, ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::flow::Flow;
 
 use std::ffi::CString;
 
@@ -24,6 +25,7 @@ use sawp::error::ErrorKind as SawpErrorKind;
 use sawp::parser::{Direction, Parse};
 use sawp::probe::{Probe, Status};
 use sawp_modbus::{self, AccessType, ErrorFlags, Flags, Message};
+use suricata_sys::sys::AppProto;
 
 pub const REQUEST_FLOOD: usize = 500; // Default unreplied Modbus requests are considered a flood
 pub const MODBUS_PARSER: sawp_modbus::Modbus = sawp_modbus::Modbus { probe_strict: true };
@@ -124,6 +126,8 @@ impl ModbusState {
         for tx in &mut self.transactions {
             if let Some(req) = &tx.request {
                 if tx.response.is_none() && resp.matches(req) {
+                    tx.tx_data.updated_tc = true;
+                    tx.tx_data.updated_ts = true;
                     return Some(tx);
                 }
             }
@@ -139,6 +143,8 @@ impl ModbusState {
         for tx in &mut self.transactions {
             if let Some(resp) = &tx.response {
                 if tx.request.is_none() && req.matches(resp) {
+                    tx.tx_data.updated_tc = true;
+                    tx.tx_data.updated_ts = true;
                     return Some(tx);
                 }
             }
@@ -184,12 +190,14 @@ impl ModbusState {
                             match self.find_response_and_validate(&mut msg) {
                                 Some(tx) => {
                                     tx.set_events_from_flags(&msg.error_flags);
+                                    tx.tx_data.updated_tc = true;
+                                    tx.tx_data.updated_ts = true;
                                     tx.request = Some(msg);
                                 }
                                 None => {
                                     let mut tx = match self.new_tx() {
                                         Some(tx) => tx,
-                                        None => return AppLayerResult::ok(),
+                                        None => return AppLayerResult::err(),
                                     };
                                     tx.set_events_from_flags(&msg.error_flags);
                                     tx.request = Some(msg);
@@ -210,12 +218,14 @@ impl ModbusState {
                                 } else {
                                     tx.set_events_from_flags(&msg.error_flags);
                                 }
+                                tx.tx_data.updated_tc = true;
+                                tx.tx_data.updated_ts = true;
                                 tx.response = Some(msg);
                             }
                             None => {
                                 let mut tx = match self.new_tx() {
                                     Some(tx) => tx,
-                                    None => return AppLayerResult::ok(),
+                                    None => return AppLayerResult::err(),
                                 };
                                 if msg
                                     .access_type
@@ -272,13 +282,16 @@ impl ModbusState {
 /// Probe input to see if it looks like Modbus.
 #[no_mangle]
 pub extern "C" fn rs_modbus_probe(
-    _flow: *const core::Flow, _direction: u8, input: *const u8, len: u32, _rdir: *mut u8,
+    _flow: *const Flow, _direction: u8, input: *const u8, len: u32, _rdir: *mut u8,
 ) -> AppProto {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice: &[u8] = unsafe { std::slice::from_raw_parts(input as *mut u8, len as usize) };
     match MODBUS_PARSER.probe(slice, Direction::Unknown) {
         Status::Recognized => unsafe { ALPROTO_MODBUS },
         Status::Incomplete => ALPROTO_UNKNOWN,
-        Status::Unrecognized => unsafe { ALPROTO_FAILED },
+        Status::Unrecognized => ALPROTO_FAILED,
     }
 }
 
@@ -302,7 +315,7 @@ pub unsafe extern "C" fn rs_modbus_state_tx_free(state: *mut std::os::raw::c_voi
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_modbus_parse_request(
-    _flow: *const core::Flow, state: *mut std::os::raw::c_void, pstate: *mut std::os::raw::c_void,
+    _flow: *const Flow, state: *mut std::os::raw::c_void, pstate: *mut std::os::raw::c_void,
     stream_slice: StreamSlice,
     _data: *const std::os::raw::c_void,
 ) -> AppLayerResult {
@@ -321,7 +334,7 @@ pub unsafe extern "C" fn rs_modbus_parse_request(
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_modbus_parse_response(
-    _flow: *const core::Flow, state: *mut std::os::raw::c_void, pstate: *mut std::os::raw::c_void,
+    _flow: *const Flow, state: *mut std::os::raw::c_void, pstate: *mut std::os::raw::c_void,
     stream_slice: StreamSlice,
     _data: *const std::os::raw::c_void,
 ) -> AppLayerResult {
@@ -404,7 +417,6 @@ pub unsafe extern "C" fn rs_modbus_register_parser() {
         get_state_data: rs_modbus_get_state_data,
         apply_tx_config: None,
         flags: 0,
-        truncate: None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };
@@ -416,6 +428,7 @@ pub unsafe extern "C" fn rs_modbus_register_parser() {
         if AppLayerParserConfParserEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {
             let _ = AppLayerRegisterParser(&parser, alproto);
         }
+        AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_MODBUS);
     }
 }
 

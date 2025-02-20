@@ -15,17 +15,14 @@
  * 02110-1301, USA.
  */
 
-#ifndef __RUST_CONTEXT_H__
-#define __RUST_CONTEXT_H__
+#ifndef SURICATA_RUST_CONTEXT_H
+#define SURICATA_RUST_CONTEXT_H
 
 #include "flow.h"
 #include "detect.h"
 #include "detect-engine-state.h" //DetectEngineState
 
-#include "app-layer-krb5.h" //KRB5State, KRB5Transaction
-#include "app-layer-ike.h"  //IKEState, IKETransaction
-#include "app-layer-ntp.h" //NTPState, NTPTransaction
-#include "app-layer-snmp.h" //SNMPState, SNMPTransaction
+#include "app-layer-ike.h" //IKEState, IKETransaction
 #include "app-layer-tftp.h" //TFTPState, TFTPTransaction
 
 #include "util-debug.h"
@@ -59,9 +56,6 @@ typedef struct SuricataContext_ {
     int (*FileAppendGAPById)(FileContainer *, const StreamingBufferConfig *, uint32_t track_id,
             const uint8_t *data, uint32_t data_len);
     void (*FileContainerRecycle)(FileContainer *ffc, const StreamingBufferConfig *);
-
-    int (*AppLayerRegisterParser)(const struct AppLayerParser *p, AppProto alproto);
-
 } SuricataContext;
 
 extern const SuricataContext suricata_context;
@@ -74,4 +68,4 @@ typedef struct SuricataFileContext_ {
 
 const SuricataContext *SCGetContext(void);
 
-#endif /* !__RUST_CONTEXT_H__ */
+#endif /* !SURICATA_RUST_CONTEXT_H */

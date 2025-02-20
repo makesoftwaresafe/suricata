@@ -2,6 +2,10 @@ name: builds
 
 on:
   push:
+    paths-ignore:
+      # Don't run this workflow if only files under doc/ have been
+      # modified.
+      - "doc/**"
   pull_request:
   workflow_dispatch:
     inputs:
@@ -19,9 +23,6 @@ concurrency:
 permissions: read-all
 
 env:
-  DEFAULT_SV_REPO: https://github.com/OISF/suricata-verify
-  DEFAULT_SV_BRANCH: master
-
   DEFAULT_CFLAGS: "-Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function"
 
   # Apt sometimes likes to ask for user input, this will prevent that.
@@ -30,131 +31,20 @@ env:
   # A recent version of stable Rust that is known to pass build, test and other
   # verification steps in this workflow. This was added because using "stable"
   # could cause some steps to fail.
-  RUST_VERSION_KNOWN: "1.70.0"
-
-  # The minimum version of Rust supported.
-  RUST_VERSION_MIN: "1.63.0"
+  RUST_VERSION_KNOWN: "1.80.0"
 
 jobs:
 
   prepare-deps:
     name: Prepare dependencies
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dumping github context for debugging
-        run: echo $JSON
-        env:
-          JSON: ${{ toJSON(github) }}
-      - run: sudo apt update && sudo apt -y install jq curl
-      - name: Parse repo and branch information
-        env:
-          # We fetch the actual pull request to get the latest body as
-          # github.event.pull_request.body has the body from the
-          # initial pull request.
-          PR_HREF: ${{ github.event.pull_request._links.self.href }}
-        run: |
-          if test "${PR_HREF}"; then
-              body=$(curl -s "${PR_HREF}" | jq -r .body | tr -d '\r')
-
-              echo "Parsing branch and PR info from:"
-              echo "${body}"
-
-              LIBHTP_REPO=$(echo "${body}" | awk -F = '/^LIBHTP_REPO=/ { print $2 }')
-              LIBHTP_BRANCH=$(echo "${body}" | awk -F = '/^LIBHTP_BRANCH=/ { print $2 }')
-
-              SU_REPO=$(echo "${body}" | awk -F = '/^SU_REPO=/ { print $2 }')
-              SU_BRANCH=$(echo "${body}" | awk -F = '/^SU_BRANCH=/ { print $2 }')
-
-              SV_REPO=$(echo "${body}" | awk -F = '/^SV_REPO=/ { print $2 }')
-              SV_BRANCH=$(echo "${body}" | awk -F = '/^SV_BRANCH=/ { print $2 }')
-          else
-              echo "No pull request body, will use inputs or defaults."
-              LIBHTP_REPO=${{ inputs.LIBHTP_REPO }}
-              LIBHTP_BRANCH=${{ inputs.LIBHTP_BRANCH }}
-              SU_REPO=${{ inputs.SU_REPO }}
-              SU_BRANCH=${{ inputs.SU_BRANCH }}
-              SV_REPO=${{ inputs.SV_REPO }}
-              SV_BRANCH=${{ inputs.SV_BRANCH }}
-          fi
-
-          # If the _REPO variables don't contain a full URL, add GitHub.
-          if [ "${LIBHTP_REPO}" ] && ! echo "${LIBHTP_REPO}" | grep -q '^https://'; then
-              LIBHTP_REPO="https://github.com/${LIBHTP_REPO}"
-          fi
-          if [ "${SU_REPO}" ] && ! echo "${SU_REPO}" | grep -q '^https://'; then
-              SU_REPO="https://github.com/${SU_REPO}"
-          fi
-          if [ "${SV_REPO}" ] && ! echo "${SV_REPO}" | grep -q '^https://'; then
-              SV_REPO="https://github.com/${SV_REPO}"
-          fi
-
-          echo LIBHTP_REPO=${LIBHTP_REPO} | tee -a ${GITHUB_ENV}
-          echo LIBHTP_BRANCH=${LIBHTP_BRANCH} | tee -a ${GITHUB_ENV}
-
-          echo SU_REPO=${SU_REPO} | tee -a ${GITHUB_ENV}
-          echo SU_BRANCH=${SU_BRANCH} | tee -a ${GITHUB_ENV}
-
-          echo SV_REPO=${SV_REPO:-${DEFAULT_SV_REPO}} | tee -a ${GITHUB_ENV}
-          echo SV_BRANCH=${SV_BRANCH:-${DEFAULT_SV_BRANCH}} | tee -a ${GITHUB_ENV}
-
-      - name: Annotate output
-        run: |
-          echo "::notice:: LIBHTP_REPO=${LIBHTP_REPO}"
-          echo "::notice:: LIBHTP_BRANCH=${LIBHTP_BRANCH}"
-          echo "::notice:: SU_REPO=${SU_REPO}"
-          echo "::notice:: SU_BRANCH=${SU_BRANCH}"
-          echo "::notice:: SV_REPO=${SV_REPO}"
-          echo "::notice:: SV_BRANCH=${SV_BRANCH}"
-
-      # Now checkout Suricata for the bundle script.
-      - name: Checking out Suricata
-        uses: actions/checkout@v3.5.3
-
-      - name: Fetching libhtp
-        run: |
-          DESTDIR=./bundle ./scripts/bundle.sh libhtp
-          tar zcf libhtp.tar.gz -C bundle libhtp
-      - name: Fetching suricata-update
-        run: |
-          DESTDIR=./bundle ./scripts/bundle.sh suricata-update
-          tar zcf suricata-update.tar.gz -C bundle suricata-update
-
-      - name: Fetching suricata-verify
-        run: |
-          # Looking for a pull request number. in the SV_BRANCH
-          # value. This could be "pr/NNN", "pull/NNN" or a link to an
-          # OISF/suricata-verify pull request.
-          pr=$(echo "${SV_BRANCH}" | sed -n \
-              -e 's/^https:\/\/github.com\/OISF\/suricata-verify\/pull\/\([0-9]*\)$/\1/p' \
-              -e 's/^pull\/\([0-9]*\)$/\1/p' \
-              -e 's/^pr\/\([0-9]*\)$/\1/p')
-          if [ "${pr}" ]; then
-              SV_BRANCH="refs/pull/${pr}/head"
-              echo "Using suricata-verify pull-request ${SV_BRANCH}"
-          else
-              echo "Using suricata-verify branch ${SV_BRANCH}"
-          fi
-          git clone --depth 1 ${SV_REPO} suricata-verify
-          cd suricata-verify
-          git fetch --depth 1 origin ${SV_BRANCH}
-          git -c advice.detachedHead=false checkout FETCH_HEAD
-          cd ..
-          tar zcf suricata-verify.tar.gz suricata-verify
-      - name: Uploading prep archive
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
-        with:
-          name: prep
-          path: |
-            libhtp.tar.gz
-            suricata-update.tar.gz
-            suricata-verify.tar.gz
+    uses: ./.github/workflows/prepare-deps.yml
 
   prepare-cbindgen:
     name: Prepare cbindgen
     runs-on: ubuntu-latest
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo
           key: ${{ github.job }}-cargo
@@ -168,42 +58,34 @@ jobs:
           cargo install --target x86_64-unknown-linux-musl --debug cbindgen
           cp $HOME/.cargo/bin/cbindgen .
       - name: Uploading prep archive
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
-          name: prep
+          name: cbindgen
           path: .
 
   almalinux-9:
     name: AlmaLinux 9
     runs-on: ubuntu-latest
     container: almalinux:9
-    needs: [prepare-deps]
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
 
-      - uses: actions/checkout@v3.5.3
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
-      # Download and extract dependency archives created during prep
-      # job.
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: prep
-          path: prep
-      - run: tar xvf prep/libhtp.tar.gz
-      - run: tar xvf prep/suricata-update.tar.gz
-      - run: tar xvf prep/suricata-verify.tar.gz
       - name: Install system packages
         run: |
           dnf -y install dnf-plugins-core epel-release
@@ -222,7 +104,6 @@ jobs:
                 git \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libtool \
                 libyaml-devel \
                 libnfnetlink-devel \
@@ -235,7 +116,6 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-devel \
@@ -258,18 +138,27 @@ jobs:
                 texlive-upquote \
                 texlive-capt-of \
                 texlive-needspace
-      #- name: Setup cppclean
-      #  run: |
-      #    git clone --depth 1 --branch suricata https://github.com/catenacyber/cppclean
-      #    cd cppclean
-      #    python3 setup.py install
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: ./.github/actions/install-cbindgen
+      # Download and extract dependency archives created during prep
+      # job.
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xvf prep/libhtp.tar.gz
+      - run: tar xvf prep/suricata-update.tar.gz
+      - run: tar xvf prep/suricata-verify.tar.gz
       - name: Configuring
         run: |
           ./autogen.sh
-          CFLAGS="${DEFAULT_CFLAGS}" ./configure
-      - run: make -j2 distcheck
+          CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings
+      - run: make -j ${{ env.CPUS }} distcheck
         env:
-          DISTCHECK_CONFIGURE_FLAGS: "--enable-unittests --enable-debug --enable-lua --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk"
+          DISTCHECK_CONFIGURE_FLAGS: "--enable-unittests --enable-debug --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk"
+          MAKEFLAGS: "-j ${{ env.CPUS }}"
       - run: test -e doc/userguide/suricata.1
       - name: Checking includes
         run: |
@@ -277,7 +166,7 @@ jobs:
       - name: Building Rust documentation
         run: make doc
         working-directory: rust
-      - run: make install
+      - run: make install install-conf
       - run: suricatasc -h
       - run: suricata-update -V
       - name: Check if Suricata-Update example configuration files are installed
@@ -288,27 +177,56 @@ jobs:
           test -e /usr/local/lib/suricata/python/suricata/update/configs/modify.conf
           test -e /usr/local/lib/suricata/python/suricata/update/configs/threshold.in
           test -e /usr/local/lib/suricata/python/suricata/update/configs/update.yaml
-      - name: Build C json filetype plugin
-        working-directory: examples/plugins/c-json-filetype
-        run: make
-      - name: Check C json filetype plugin
-        run: test -e examples/plugins/c-json-filetype/.libs/json-filetype.so.0.0.0
-      - name: Installing headers and library
+
+      - name: Test capture plugin
+        working-directory: examples/plugins/ci-capture
         run: |
-          make install-headers
-          make install-library
-      - name: Test plugin build with Makefile.example
+          make
+          ../../../src/suricata -S /dev/null --set plugins.0=./capture.so --capture-plugin=ci-capture --runmode=single -l . -c ../../../suricata.yaml
+          cat eve.json | jq -c 'select(.dns)'
+          test $(cat eve.json | jq -c 'select(.dns)' | wc -l) = "1"
+
+      - name: Test library build in tree
+        working-directory: examples/lib/simple
+        run: make clean all
+
+      - name: Test plugin build in tree
         working-directory: examples/plugins/c-json-filetype
-        run: PATH=/usr/local/bin:$PATH make -f Makefile.example
+        run: make clean all
+
+      - name: Build example C custom logger plugin
+        working-directory: examples/plugins/c-custom-loggers
+        run: make clean all
+
+      - name: Install Suricata and library
+        run: make install install-headers install-library
+
+      - name: Test library build out of tree
+        working-directory: examples/lib/simple
+        run: PATH=/usr/local/bin:$PATH make -f Makefile.example clean all
+
+      - name: Cleaning source directory for standalone plugin test.
+        run: make clean
+      - name: Test plugin against installed headers
+        working-directory: examples/plugins/c-json-filetype
+        run: |
+          # First use sed to pretend we are q user following our
+          # directions for building a standalone plugin.
+          sed -i 's/^#LIBSURICATA_CONFIG/LIBSURICATA_CONFIG/' Makefile
+          sed -i 's/^#CPPFLAGS/CPPFLAGS/' Makefile
+          sed -i 's/^CPPFLAGS.*HAVE_CONFIG_H//' Makefile
+
+          # And build.
+          PATH=/usr/local/bin:$PATH make clean all
 
   almalinux-9-templates:
     name: AlmaLinux 9 Test Templates
     runs-on: ubuntu-latest
     container: almalinux:9
-    needs: [prepare-deps]
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           # TODO: Find some variable that matches the job name.
@@ -317,22 +235,14 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
 
-      - uses: actions/checkout@v3.5.3
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
-      # Download and extract dependency archives created during prep
-      # job.
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: prep
-          path: prep
-      - run: tar xvf prep/libhtp.tar.gz
-      - run: tar xvf prep/suricata-update.tar.gz
-      - run: tar xvf prep/suricata-verify.tar.gz
       - name: Install system packages
         run: |
           dnf -y install dnf-plugins-core epel-release
@@ -350,7 +260,6 @@ jobs:
                 git \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libtool \
                 libyaml-devel \
                 libnfnetlink-devel \
@@ -363,7 +272,6 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-devel \
@@ -376,13 +284,28 @@ jobs:
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - run: rustup component add rustfmt
       - run: rustup component add clippy
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+
+      - uses: ./.github/actions/install-cbindgen
+
+      # Download and extract dependency archives created during prep
+      # job.
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xvf prep/libhtp.tar.gz
+      - run: tar xvf prep/suricata-update.tar.gz
+      - run: tar xvf prep/suricata-verify.tar.gz
       - name: Build
         run: |
           ./autogen.sh
           CFLAGS="${DEFAULT_CFLAGS}" ./configure
-          make -j2
+          make -j ${{ env.CPUS }}
       - run: ./scripts/setup-app-layer.py --parser --logger --detect FooBar payload
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: ./src/suricata --list-app-layer-protos | grep foobar
       - name: Verify rustfmt
         run: rustfmt -v --check src/applayerfoobar/*.rs
@@ -390,6 +313,158 @@ jobs:
       - name: Verify clippy
         run: cargo clippy --all-features
         working-directory: rust
+
+  almalinux-9-non-bundled-libhtp:
+    name: AlmaLinux 9 Non-Bundled LibHTP
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    needs: [prepare-deps, ubuntu-22-04-dist]
+    steps:
+      # Cache Rust stuff.
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Cache RPMs
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: /var/cache/dnf
+          key: ${{ github.job }}-dnf
+      - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install system packages
+        run: |
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf -y install \
+                autoconf \
+                automake \
+                cargo-vendor \
+                cbindgen \
+                diffutils \
+                numactl-devel \
+                dpdk-devel \
+                file-devel \
+                gcc \
+                gcc-c++ \
+                git \
+                jansson-devel \
+                jq \
+                libtool \
+                libyaml-devel \
+                libnfnetlink-devel \
+                libnetfilter_queue-devel \
+                libnet-devel \
+                libcap-ng-devel \
+                libevent-devel \
+                libmaxminddb-devel \
+                libpcap-devel \
+                libtool \
+                lz4-devel \
+                make \
+                pcre2-devel \
+                pkgconfig \
+                python3-devel \
+                python3-sphinx \
+                python3-yaml \
+                rust-toolset \
+                sudo \
+                which \
+                zlib-devel
+
+      - name: Download suricata.tar.gz
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: dist
+
+      - run: tar xf suricata-*.tar.gz --strip-components=1
+      - run: cd libhtp && ./configure --prefix=/usr/local
+      - run: cd libhtp && make -j ${{ env.CPUS }}
+      - run: cd libhtp && make install
+
+      - run: PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --enable-non-bundled-htp --with-libhtp-includes=/usr/local/include --with-libhtp-libraries=/usr/local/lib
+
+  rpms:
+    name: Build RPMs
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    needs: [ubuntu-22-04-dist]
+    strategy:
+      fail-fast: false
+      matrix:
+        container:
+          - almalinux:9
+          - fedora:40
+    steps:
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Cache RPMs
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: /var/cache/dnf
+          key: ${{ github.job }}-dnf
+      - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Install packages
+        run: |
+          if test -e /etc/almalinux-release; then
+              dnf -y install \
+                epel-release \
+                git \
+                make \
+                rpm-build \
+                rpmdevtools \
+                dnf-plugins-core
+              dnf config-manager --set-enabled crb
+           elif test -e /etc/fedora-release; then
+              dnf -y install \
+                git \
+                make \
+                rpm-build \
+                rpmdevtools
+           else
+              echo "ERROR: Unsupported distribution for RPM building"
+              exit 1
+           fi
+      - name: Download Suricata distribution archive
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: dist
+      - run: git clone https://github.com/jasonish/suricata-rpms
+      - run: make update-release update-sources
+        working-directory: suricata-rpms/devel
+      - run: dnf -y install $(rpmspec -q --buildrequires ./suricata.spec)
+        working-directory: suricata-rpms/devel
+      - run: mv suricata-*.tar.gz suricata-rpms/devel
+      - run: make srpm
+        working-directory: suricata-rpms/devel
+      - run: make local
+        working-directory: suricata-rpms/devel
+
+      # We need a step for each RPM upload as we can't use the
+      # container name directly in an artifact, as artifacts can't
+      # have ':' in the name.
+      - if: matrix.container == 'fedora:40'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        name: Uploading RPMs
+        with:
+          name: rpms-fedora-40
+          path: suricata-rpms/devel/rpms
+      - if: matrix.container == 'almalinux:9'
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        name: Uploading RPMs
+        with:
+          name: rpms-epel-9
+          path: suricata-rpms/devel/rpms
 
   almalinux-8:
     name: AlmaLinux 8
@@ -399,44 +474,21 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
 
-      - uses: actions/checkout@v3.5.3
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
-      # Prebuild check for duplicate SIDs
-      - name: Check for duplicate SIDs
-        run: |
-          dups=$(sed -n 's/^alert.*sid:\([[:digit:]]*\);.*/\1/p' ./rules/*.rules|sort|uniq -d|tr '\n' ' ')
-          if [[ "${dups}" != "" ]]; then
-            echo "::error::Duplicate SIDs found:${dups}"
-            exit 1
-          fi
-
-      # Download and extract dependency archives created during prep
-      # job.
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: prep
-          path: prep
-      - run: tar xvf prep/libhtp.tar.gz
-      - run: tar xvf prep/suricata-update.tar.gz
-      - run: tar xvf prep/suricata-verify.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Install system packages
         run: |
           yum -y install dnf-plugins-core
@@ -454,7 +506,6 @@ jobs:
                 git \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libtool \
                 libyaml-devel \
                 libnfnetlink-devel \
@@ -467,7 +518,6 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-devel \
@@ -476,11 +526,36 @@ jobs:
                 sudo \
                 which \
                 zlib-devel
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+
+      - uses: ./.github/actions/install-cbindgen
+
+      # Prebuild check for duplicate SIDs
+      - name: Check for duplicate SIDs
+        run: |
+          dups=$(sed -n 's/^alert.*sid:\([[:digit:]]*\);.*/\1/p' ./rules/*.rules|sort|uniq -d|tr '\n' ' ')
+          if [[ "${dups}" != "" ]]; then
+            echo "::error::Duplicate SIDs found:${dups}"
+            exit 1
+          fi
+
+      # Download and extract dependency archives created during prep
+      # job.
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xvf prep/libhtp.tar.gz
+      - run: tar xvf prep/suricata-update.tar.gz
+      - run: tar xvf prep/suricata-verify.tar.gz
+      - uses: ./.github/actions/install-cbindgen
       - name: Configuring
         run: |
           ./autogen.sh
           CFLAGS="${DEFAULT_CFLAGS}" ./configure
-      - run: make -j2 check
+      - run: make -j ${{ env.CPUS }} check
       - name: Checking includes
         run: |
           cppclean src/*.h | grep "does not need to be #included" | python3 scripts/cppclean_check.py
@@ -492,21 +567,24 @@ jobs:
     name: CentOS Stream 9
     runs-on: ubuntu-latest
     container: quay.io/centos/centos:stream9
-    needs: [prepare-deps, debian-12-dist]
+    needs: [prepare-deps, ubuntu-22-04-dist]
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install system packages
         run: |
@@ -516,7 +594,6 @@ jobs:
                 autoconf \
                 automake \
                 cargo-vendor \
-                cbindgen \
                 diffutils \
                 numactl-devel \
                 dpdk-devel \
@@ -526,7 +603,6 @@ jobs:
                 git \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libtool \
                 libyaml-devel \
                 libnfnetlink-devel \
@@ -539,7 +615,6 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-devel \
@@ -550,13 +625,13 @@ jobs:
                 which \
                 zlib-devel
       - name: Download suricata.tar.gz
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: dist
       - run: tar zxvf suricata-*.tar.gz --strip-components=1
       - name: ./configure
         run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: make install
       - run: make install-conf
       - run: suricatasc -h
@@ -569,7 +644,7 @@ jobs:
           test -e /usr/local/lib/suricata/python/suricata/update/configs/modify.conf
           test -e /usr/local/lib/suricata/python/suricata/update/configs/threshold.in
           test -e /usr/local/lib/suricata/python/suricata/update/configs/update.yaml
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -577,193 +652,33 @@ jobs:
       - run: python3 ./suricata-verify/run.py -q --debug-failed
       - run: suricata-update -V
       - run: suricatasc -h
-
-  centos-stream8:
-    name: CentOS Stream 8
-    runs-on: ubuntu-latest
-    container: quay.io/centos/centos:stream8
-    needs: [prepare-deps, debian-12-dist]
-    steps:
-      # Cache Rust stuff.
-      - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
-        with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
-
-      - name: Cache RPMs
-        uses: actions/cache@v3.3.1
-        with:
-          path: /var/cache/dnf
-          key: ${{ github.job }}-dnf
-      - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
-
-      - name: Install system packages
-        run: |
-          dnf -y install dnf-plugins-core epel-release
-          dnf config-manager --set-enabled powertools
-          dnf -y install \
-                autoconf \
-                automake \
-                diffutils \
-                numactl-devel \
-                dpdk-devel \
-                file-devel \
-                gcc \
-                gcc-c++ \
-                git \
-                jansson-devel \
-                jq \
-                lua-devel \
-                libtool \
-                libyaml-devel \
-                libnfnetlink-devel \
-                libnetfilter_queue-devel \
-                libnet-devel \
-                libcap-ng-devel \
-                libevent-devel \
-                libmaxminddb-devel \
-                libpcap-devel \
-                libtool \
-                lz4-devel \
-                make \
-                nss-devel \
-                pcre2-devel \
-                pkgconfig \
-                python3-devel \
-                python3-yaml \
-                rust-toolset \
-                sudo \
-                which \
-                zlib-devel
-      - name: Download suricata.tar.gz
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: dist
-      - run: tar zxvf suricata-*.tar.gz --strip-components=1
-      - name: ./configure
-        run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
-      - run: make -j2
-      - run: make install
-      - run: make install-conf
-      - run: suricatasc -h
-      - run: suricata-update -V
-      - name: Check if Suricata-Update example configuration files are installed
-        run: |
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/disable.conf
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/drop.conf
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/enable.conf
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/modify.conf
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/threshold.in
-          test -e /usr/local/lib/suricata/python/suricata/update/configs/update.yaml
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: prep
-          path: prep
-      - run: tar xf prep/suricata-verify.tar.gz
-      - run: python3 ./suricata-verify/run.py -q --debug-failed
-      - run: suricata-update -V
-      - run: suricatasc -h
-
-  centos-7:
-    name: CentOS 7
-    runs-on: ubuntu-latest
-    container: centos:7
-    needs: [prepare-deps, debian-12-dist]
-    steps:
-      - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
-        with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
-
-      - name: Cache RPMs
-        uses: actions/cache@v3.3.1
-        with:
-          path: /var/cache/yum
-          key: ${{ github.job }}-yum
-      - run: echo "keepcache=1" >> /etc/yum.conf
-
-      - name: Install system dependencies
-        run: |
-          yum -y install epel-release
-          yum -y install \
-                autoconf \
-                automake \
-                cargo \
-                diffutils \
-                file-devel \
-                gcc \
-                gcc-c++ \
-                jansson-devel \
-                jq \
-                lua-devel \
-                libtool \
-                libyaml-devel \
-                libnfnetlink-devel \
-                libnetfilter_queue-devel \
-                libnet-devel \
-                libcap-ng-devel \
-                libevent-devel \
-                libmaxminddb-devel \
-                libpcap-devel \
-                lz4-devel \
-                make \
-                nss-devel \
-                pcre2-devel \
-                pkgconfig \
-                python36-PyYAML \
-                rust \
-                sudo \
-                which \
-                zlib-devel
-      - name: Download suricata.tar.gz
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: dist
-      - run: tar zxvf suricata-*.tar.gz --strip-components=1
-      # This isn't really needed as we are building from a prepared
-      # package, but some package managers like RPM and Debian like to
-      # run this command even on prepared packages, so make sure it
-      # works.
-      - name: Test autoreconf
-        run: autoreconf -fv --install
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
-      - run: make -j2
-      - run: make install
-      - run: make install-conf
-      - run: make distcheck
+      # Test build after clean.
       - run: make clean
-      - run: make -j2
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
-        with:
-          name: prep
-          path: prep
-      - run: tar xf prep/suricata-verify.tar.gz
-      - run: python3 ./suricata-verify/run.py -q --debug-failed
-      - run: suricata-update -V
-      - run: suricatasc -h
+      - run: make -j ${{ env.CPUS }}
 
-  fedora-38-sv-codecov:
-    name: Fedora 38 (Suricata Verify codecov)
+  fedora-41-sv-codecov:
+    name: Fedora 41 (Suricata Verify codecov)
     runs-on: ubuntu-latest
-    container: fedora:38
-    needs: [prepare-deps]
+    container: fedora:41
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install \
@@ -781,7 +696,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -796,7 +710,6 @@ jobs:
                 llvm-devel \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
@@ -805,22 +718,24 @@ jobs:
                 zlib-devel
       # packaged Rust version has no profiler support built in, so get from rustup
       - name: Install Rust
-        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.63.0 -y
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.83 -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: ./.github/actions/install-cbindgen
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: ./autogen.sh
-      - run: ./configure --disable-shared
+      - run: ./configure --enable-warnings --disable-shared
         env:
           CC: "clang"
           RUSTFLAGS: "-C instrument-coverage"
           CFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
         env:
           CC: "clang"
           RUSTFLAGS: "-C instrument-coverage"
@@ -832,32 +747,35 @@ jobs:
       - run: llvm-profdata merge -o default.profdata $(find suricata-verify/tests/ -name '*.profraw')
       - run: llvm-cov show ./src/suricata -instr-profile=default.profdata --show-instantiations --ignore-filename-regex="^/root/.*" > coverage.txt
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@d9f34f8cd5cb3b3eb79b3e4b5dae3a16df499a70
+        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3
         with:
           fail_ci_if_error: false
           flags: suricata-verify
 
-  # Fedora 38 build using Clang.
-  fedora-38-clang:
-    name: Fedora 38 (clang, debug, asan, wshadow, rust-strict, systemd)
+  # Fedora 41 build using Clang.
+  fedora-41-clang:
+    name: Fedora 41 (clang, debug, asan, wshadow, rust-strict, systemd)
     runs-on: ubuntu-latest
-    container: fedora:38
-    needs: [prepare-deps]
+    container: fedora:41
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install \
@@ -867,7 +785,6 @@ jobs:
                 cbindgen \
                 ccache \
                 clang \
-                coccinelle \
                 diffutils \
                 file-devel \
                 gcc \
@@ -876,7 +793,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -892,34 +808,33 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
+                parallel \
                 pcre2-devel \
                 pkgconfig \
                 python \
                 python3-yaml \
                 sudo \
-                systemd-devel \
                 which \
                 zlib-devel
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: ./.github/actions/install-cbindgen
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: ./autogen.sh
-      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow" ./configure --disable-shared  --enable-coccinelle
-      - name: Running unit tests and cocci checks
-        # Set the concurrency level for cocci.
-        run: CONCURRENCY_LEVEL=2 make check
+      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow" ./configure --disable-shared
+      - run: make check
       - run: make distclean
-      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow -fsanitize=address -fno-omit-frame-pointer" ./configure --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue --enable-lua
+      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow -fsanitize=address -fno-omit-frame-pointer" ./configure --enable-warnings --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
         env:
           LDFLAGS: "-fsanitize=address"
           ac_cv_func_realloc_0_nonnull: "yes"
           ac_cv_func_malloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: ASAN_OPTIONS="detect_leaks=0" ./src/suricata -u -l .
       - name: Extracting suricata-verify
         run: tar xf prep/suricata-verify.tar.gz
@@ -941,22 +856,25 @@ jobs:
       - run: suricata-update -V
       - run: suricatasc -h
       # Check compilation against systemd
-      - run: ldd src/suricata | grep libsystemd &> /dev/null
+      - run: src/suricata --build-info | grep -E "Systemd support:\s+yes" &> /dev/null
 
-  # Fedora 38 build using GCC.
-  fedora-38-gcc:
-    name: Fedora 38 (gcc, debug, asan, wshadow, rust-strict)
+  # Fedora 39 build using GCC.
+  fedora-41-gcc:
+    name: Fedora 41 (gcc, debug, asan, wshadow, rust-strict)
     runs-on: ubuntu-latest
-    container: fedora:38
-    needs: [prepare-deps]
+    container: fedora:41
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install \
@@ -973,7 +891,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -987,28 +904,29 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: ./.github/actions/install-cbindgen
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: ./autogen.sh
-      - run: ./configure --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
+      - run: ./configure --enable-warnings --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
         env:
           CFLAGS: "${{ env.DEFAULT_CFLAGS }} -Wshadow -fsanitize=address -fno-omit-frame-pointer"
           LDFLAGS: "-fsanitize=address"
           ac_cv_func_realloc_0_nonnull: "yes"
           ac_cv_func_malloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: ASAN_OPTIONS="detect_leaks=0" ./src/suricata -u -l .
       - name: Extracting suricata-verify
         run: tar xf prep/suricata-verify.tar.gz
@@ -1030,27 +948,30 @@ jobs:
       - run: suricata-update -V
       - run: suricatasc -h
 
-  # Fedora 39 build using Clang.
-  fedora-39-clang:
-    name: Fedora 39 (clang, debug, asan, wshadow, rust-strict, systemd)
+  # Fedora 40 build using Clang.
+  fedora-40-clang:
+    name: Fedora 40 (clang, debug, asan, wshadow, rust-strict, systemd)
     runs-on: ubuntu-latest
-    container: fedora:39
+    container: fedora:40
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install \
@@ -1068,7 +989,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -1084,28 +1004,28 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
                 sudo \
-                systemd-devel \
                 which \
                 zlib-devel
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: ./.github/actions/install-cbindgen
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: ./autogen.sh
-      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow -fsanitize=address -fno-omit-frame-pointer" ./configure --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue --enable-lua
+      - run: CC="clang" CFLAGS="$DEFAULT_CFLAGS -Wshadow -fsanitize=address -fno-omit-frame-pointer" ./configure --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
         env:
           LDFLAGS: "-fsanitize=address"
           ac_cv_func_realloc_0_nonnull: "yes"
           ac_cv_func_malloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: ASAN_OPTIONS="detect_leaks=0" ./src/suricata -u -l .
       - name: Extracting suricata-verify
         run: tar xf prep/suricata-verify.tar.gz
@@ -1127,22 +1047,25 @@ jobs:
       - run: suricata-update -V
       - run: suricatasc -h
       # Check compilation against systemd
-      - run: ldd src/suricata | grep libsystemd &> /dev/null
+      - run: src/suricata --build-info | grep -E "Systemd support:\s+yes" &> /dev/null
 
-  # Fedora 39 build using GCC.
-  fedora-39-gcc:
-    name: Fedora 39 (gcc, debug, asan, wshadow, rust-strict)
+  # Fedora 40 build using GCC.
+  fedora-40-gcc:
+    name: Fedora 40 (gcc, debug, asan, wshadow, rust-strict)
     runs-on: ubuntu-latest
-    container: fedora:39
+    container: fedora:40
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install \
@@ -1159,7 +1082,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -1173,15 +1095,16 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: ./.github/actions/install-cbindgen
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -1194,7 +1117,7 @@ jobs:
           LDFLAGS: "-fsanitize=address"
           ac_cv_func_realloc_0_nonnull: "yes"
           ac_cv_func_malloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: ASAN_OPTIONS="detect_leaks=0" ./src/suricata -u -l .
       - name: Extracting suricata-verify
         run: tar xf prep/suricata-verify.tar.gz
@@ -1219,12 +1142,15 @@ jobs:
   # This job builds and tests Suricata as a non-root user as some
   # issues only show up when not running as root, and by default all
   # jobs in GitHub actions are run as root inside the container.
-  fedora-39-non-root:
-    name: Fedora 39 (non-root, debug, clang, asan, wshadow, rust-strict, systemd)
+  fedora-40-non-root:
+    name: Fedora 40 (non-root, debug, clang, asan, wshadow, rust-strict)
     runs-on: ubuntu-latest
-    container: fedora:39
-    needs: [prepare-deps]
+    container: fedora:40
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
       - run: |
           dnf -y install \
                 autoconf \
@@ -1241,7 +1167,6 @@ jobs:
                 hiredis-devel \
                 jansson-devel \
                 jq \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -1255,17 +1180,17 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
                 sudo \
-                systemd-devel \
                 which \
                 zlib-devel
       - run: adduser suricata
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: ./.github/actions/install-cbindgen
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -1279,7 +1204,7 @@ jobs:
       - run: sudo -u suricata -s ./autogen.sh
         working-directory: /home/suricata/suricata
 
-      - run: sudo -u suricata -s env PATH="/home/suricata/.cargo/bin:$PATH" ./configure --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
+      - run: sudo -u suricata -s env PATH="/home/suricata/.cargo/bin:$PATH" ./configure --enable-warnings --enable-debug --enable-unittests --disable-shared --enable-rust-strict --enable-hiredis --enable-nfqueue
         working-directory: /home/suricata/suricata
         env:
           ac_cv_func_realloc_0_nonnull: "yes"
@@ -1288,7 +1213,7 @@ jobs:
           CC: "clang"
           CFLAGS: "${{ env.DEFAULT_CFLAGS }} -Wshadow -fsanitize=address -fno-omit-frame-pointer"
 
-      - run: sudo -u suricata -s env PATH="/home/suricata/.cargo/bin:$PATH" make -j2
+      - run: sudo -u suricata -s env PATH="/home/suricata/.cargo/bin:$PATH" make -j ${{ env.CPUS }}
         working-directory: /home/suricata/suricata
 
       - run: sudo -u suricata -s make check
@@ -1307,17 +1232,20 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
 
       - name: Cache RPMs
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: /var/cache/dnf
           key: ${{ github.job }}-dnf
       - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           dnf -y install dnf-plugins-core epel-release
@@ -1333,7 +1261,6 @@ jobs:
                 gcc \
                 gcc-c++ \
                 git \
-                lua-devel \
                 libasan \
                 libtool \
                 libyaml-devel \
@@ -1347,15 +1274,15 @@ jobs:
                 libtool \
                 lz4-devel \
                 make \
-                nss-softokn-devel \
                 pcre2-devel \
                 pkgconfig \
                 python3-yaml \
                 sudo \
                 which \
                 zlib-devel
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -1369,6 +1296,138 @@ jobs:
             exit 0
           fi
 
+  almalinux-9-minimal-recommended-dependecies:
+    name: AlmaLinux 9 (Minimal/Recommended Build)
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      # Cache Rust stuff.
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Cache RPMs
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: /var/cache/dnf
+          key: ${{ github.job }}-dnf
+      - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install git dependencies
+        run: |
+          dnf -y install \
+            sudo \
+            git \
+            libtool \
+            which
+
+      - name: Install Almalinux 9 extra repositories
+        run : |
+          dnf -y update
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: ./.github/actions/install-cbindgen
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+      
+      - name: Install minimal dependencies
+        run: ./scripts/docs-almalinux9-minimal-build.sh
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - run: ./autogen.sh
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
+      - run: make -j ${{ env.CPUS }}
+      - run: ./src/suricata --build-info # check if we can run Suricata
+
+  ubuntu-24-04:
+    name: Ubuntu 24.04 (cocci)
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    needs: [prepare-deps]
+    steps:
+      - name: Cache ~/.cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          apt update
+          apt -y install \
+                autoconf \
+                automake \
+                build-essential \
+                cargo \
+                cbindgen \
+                clang-14 \
+                coccinelle \
+                dpdk-dev \
+                git \
+                jq \
+                libcap-ng-dev \
+                libevent-dev \
+                libevent-pthreads-2.1-7 \
+                libhiredis-dev \
+                libhyperscan-dev \
+                libjansson-dev \
+                libmagic-dev \
+                libnet1-dev \
+                libnetfilter-queue-dev \
+                libnetfilter-queue1 \
+                libnfnetlink-dev \
+                libnfnetlink0 \
+                libnuma-dev \
+                libpcap-dev \
+                libpcre2-dev \
+                libpython3.12 \
+                libtool \
+                libyaml-dev \
+                llvm-14-dev \
+                make \
+                parallel \
+                python-is-python3 \
+                python3-yaml \
+                rustc \
+                software-properties-common \
+                zlib1g \
+                zlib1g-dev
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-update.tar.gz
+      - run: tar xf prep/suricata-verify.tar.gz
+      - run: ./autogen.sh
+      - run: ./configure --enable-unittests --enable-coccinelle
+      - run: make -j ${{ env.CPUS }}
+      - run: CONCURRENCY_LEVEL=${{ env.CPUS }} make check
+      - run: python3 ./suricata-verify/run.py -q --debug-failed
+      - run: make install
+      - run: make install-headers
+      - run: make install-library
+
   ubuntu-22-04-cov-ut:
     name: Ubuntu 22.04 (unittests coverage)
     runs-on: ubuntu-latest
@@ -1376,10 +1435,14 @@ jobs:
     needs: [prepare-deps, prepare-cbindgen]
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
       - name: Install dependencies
         run: |
           apt update
@@ -1407,11 +1470,9 @@ jobs:
                 libnuma-dev \
                 libhiredis-dev \
                 libhyperscan-dev \
-                liblua5.1-dev \
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 llvm-14-dev \
                 make \
@@ -1425,28 +1486,24 @@ jobs:
                 dpdk-dev
       # packaged Rust version is too old for coverage, so get from rustup
       - name: Install Rust
-        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.63.0 -y
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: ./configure --disable-shared --enable-unittests
+      - run: ./configure --enable-warnings --disable-shared --enable-unittests
         env:
           CC: "clang-14"
           CXX: "clang++-14"
           RUSTFLAGS: "-C instrument-coverage"
           CFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0"
           CXXFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
         env:
           CC: "clang-14"
           CXX: "clang++-14"
@@ -1457,6 +1514,26 @@ jobs:
         env:
           LLVM_PROFILE_FILE: "/tmp/ut.profraw"
       - run: llvm-profdata-14 merge -o ut.profdata /tmp/ut.profraw
+      - run: ./src/suricata --list-runmodes -l /tmp
+        env:
+          LLVM_PROFILE_FILE: "/tmp/listrunmodes.profraw"
+      - run: llvm-profdata-14 merge -o listrunmodes.profdata /tmp/listrunmodes.profraw
+      - run: ./src/suricata --list-keywords -l /tmp
+        env:
+          LLVM_PROFILE_FILE: "/tmp/lk.profraw"
+      - run: llvm-profdata-14 merge -o lk.profdata /tmp/lk.profraw
+      - run: ./src/suricata --list-app-layer-protos -l /tmp
+        env:
+          LLVM_PROFILE_FILE: "/tmp/la.profraw"
+      - run: llvm-profdata-14 merge -o la.profdata /tmp/la.profraw
+      - run: ./src/suricata --dump-features -c suricata.yaml -l /tmp
+        env:
+          LLVM_PROFILE_FILE: "/tmp/dumpfeatures.profraw"
+      - run: llvm-profdata-14 merge -o dumpfeatures.profdata /tmp/dumpfeatures.profraw
+      - run: ./src/suricata --dump-config -c suricata.yaml -l /tmp
+        env:
+          LLVM_PROFILE_FILE: "/tmp/dumpconfig.profraw"
+      - run: llvm-profdata-14 merge -o dumpconfig.profdata /tmp/dumpconfig.profraw
       - run: llvm-cov-14 show ./src/suricata -instr-profile=ut.profdata --show-instantiations --ignore-filename-regex="^/root/.*" > coverage.txt
       - run: |
           cd rust
@@ -1481,22 +1558,460 @@ jobs:
       - run: llvm-profdata-14 merge -o htp-test.profdata /tmp/htp-test.profraw
       - run: llvm-cov-14 show libhtp/test/test_all -instr-profile=htp-test.profdata --show-instantiations --ignore-filename-regex="^/root/.*" >> coverage.txt
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@d9f34f8cd5cb3b3eb79b3e4b5dae3a16df499a70
+        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3
         with:
           fail_ci_if_error: false
           flags: unittests
 
-  ubuntu-22-04-cov-fuzz:
-    name: Ubuntu 22.04 (fuzz corpus coverage)
+  ubuntu-22-04-cov-pcapunix:
+    name: Ubuntu 22.04 (unix socket mode coverage)
     runs-on: ubuntu-latest
-    container: ubuntu:22.04
+    container:
+      image: ubuntu:22.04
+      options: --privileged
     needs: [prepare-deps, prepare-cbindgen]
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          apt update
+          apt -y install \
+                libpcre2-dev \
+                build-essential \
+                autoconf \
+                automake \
+                llvm-14-dev \
+                clang-14 \
+                git \
+                jq \
+                inetutils-ping \
+                libc++-dev \
+                libc++abi-dev \
+                libtool \
+                libpcap-dev \
+                libnet1-dev \
+                libyaml-0-2 \
+                libyaml-dev \
+                libcap-ng-dev \
+                libcap-ng0 \
+                libmagic-dev \
+                libnetfilter-queue-dev \
+                libnetfilter-queue1 \
+                libnfnetlink-dev \
+                libnfnetlink0 \
+                libnuma-dev \
+                libhiredis-dev \
+                libjansson-dev \
+                libevent-dev \
+                libevent-pthreads-2.1-7 \
+                libpython2.7 \
+                make \
+                parallel \
+                python3-yaml \
+                software-properties-common \
+                sudo \
+                zlib1g \
+                zlib1g-dev \
+                exuberant-ctags \
+                unzip \
+                curl \
+                time \
+                wget
+      # specific version to match up to the llvm version in ubuntu below
+      - name: Install Rust
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-verify.tar.gz
+      - uses: ./.github/actions/install-cbindgen
+      - name: Fix kernel mmap rnd bits
+      # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+      # high-entropy ASLR in much newer kernels that GitHub runners are
+      # using leading to random crashes: https://github.com/actions/runner-images/issues/9491
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: ./autogen.sh
+      - run: ./configure --with-gnu-ld --disable-shared --enable-gccprotect --localstatedir=/var --prefix=/usr --sysconfdir=/etc
+        env:
+          CC: "clang-14"
+          CXX: "clang++-14"
+          RUSTFLAGS: "-C instrument-coverage"
+          CFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0 -g -fno-strict-aliasing"
+          CXXFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0 -g -fno-strict-aliasing"
+          ac_cv_func_malloc_0_nonnull: "yes"
+          ac_cv_func_realloc_0_nonnull: "yes"
+      - run: make -j ${{ env.CPUS }}
+        env:
+          CC: "clang-14"
+          CXX: "clang++-14"
+          RUSTFLAGS: "-C instrument-coverage"
+      - run: |
+          ./qa/unix.sh "suricata-verify/"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/unix.profraw"
+      - run: llvm-profdata-14 merge -o default.profdata $(find /tmp/ -name '*.profraw')
+      - run: llvm-cov-14 show ./src/suricata -instr-profile=default.profdata --show-instantiations --ignore-filename-regex="^/root/.*" > coverage.txt
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3
+        with:
+          fail_ci_if_error: false
+          flags: pcap
+
+  ubuntu-22-04-cov-afpdpdk:
+    name: Ubuntu 22.04 (afpacket and dpdk coverage)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      options: --privileged
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      - name: Cache ~/.cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          apt update
+          apt -y install \
+                libpcre2-dev \
+                build-essential \
+                autoconf \
+                automake \
+                llvm-14-dev \
+                clang-14 \
+                git \
+                jq \
+                inetutils-ping \
+                libc++-dev \
+                libc++abi-dev \
+                libtool \
+                libpcap-dev \
+                libnet1-dev \
+                libyaml-0-2 \
+                libyaml-dev \
+                libcap-ng-dev \
+                libcap-ng0 \
+                libmagic-dev \
+                libnetfilter-queue-dev \
+                libnetfilter-queue1 \
+                libnfnetlink-dev \
+                libnfnetlink0 \
+                libnuma-dev \
+                libhiredis-dev \
+                libjansson-dev \
+                libevent-dev \
+                libevent-pthreads-2.1-7 \
+                libpython2.7 \
+                make \
+                parallel \
+                python3-yaml \
+                software-properties-common \
+                sudo \
+                zlib1g \
+                zlib1g-dev \
+                exuberant-ctags \
+                unzip \
+                curl \
+                time \
+                wget \
+                dpdk-dev
+      # specific version to match up to the llvm version in ubuntu below
+      - name: Install Rust
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - uses: ./.github/actions/install-cbindgen
+      - name: Fix kernel mmap rnd bits
+      # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+      # high-entropy ASLR in much newer kernels that GitHub runners are
+      # using leading to random crashes: https://github.com/actions/runner-images/issues/9491
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: ./autogen.sh
+      - run: ./configure --with-gnu-ld --enable-dpdk --disable-shared --enable-gccprotect --localstatedir=/var --prefix=/usr --sysconfdir=/etc
+        env:
+          CC: "clang-14"
+          CXX: "clang++-14"
+          RUSTFLAGS: "-C instrument-coverage"
+          CFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0 -g -fno-strict-aliasing"
+          CXXFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0 -g -fno-strict-aliasing"
+          ac_cv_func_malloc_0_nonnull: "yes"
+          ac_cv_func_realloc_0_nonnull: "yes"
+      - run: make -j ${{ env.CPUS }}
+        env:
+          CC: "clang-14"
+          CXX: "clang++-14"
+          RUSTFLAGS: "-C instrument-coverage"
+      # IDS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ids.yaml"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/dpdk-ids.profraw"
+      # IPS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ips.yaml"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/dpdk-ips.profraw"
+      # AF_PACKET tests
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "2" "autofp"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/afp2-ids-autofp.profraw"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "2" "workers"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/afp2-ids-workers.profraw"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "3" "autofp"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/afp3-ids-autofp.profraw"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "3" "workers"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/afp3-ids-workers.profraw"
+      # PCAP
+      - run: |
+          ./.github/workflows/live/pcap.sh "autofp"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/pcap-autofp.profraw"
+      - run: |
+          ./.github/workflows/live/pcap.sh "single"
+        env:
+          LLVM_PROFILE_FILE: "/tmp/pcap-single.profraw"
+      - run: llvm-profdata-14 merge -o default.profdata $(find /tmp/ -name '*.profraw')
+      - run: llvm-cov-14 show ./src/suricata -instr-profile=default.profdata --show-instantiations --ignore-filename-regex="^/root/.*" > coverage.txt
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3
+        with:
+          fail_ci_if_error: false
+          flags: livemode
+
+  ubuntu-24-04-pcap-unix:
+    name: Ubuntu 24.04 (pcap unix socket ASAN)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      options: --privileged
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      - name: Cache ~/.cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          apt update
+          apt -y install \
+                libpcre2-dev \
+                build-essential \
+                autoconf \
+                automake \
+                llvm-18-dev \
+                cargo \
+                cbindgen \
+                clang-18 \
+                git \
+                jq \
+                libc++-dev \
+                libc++abi-dev \
+                libtool \
+                libpcap-dev \
+                libnet1-dev \
+                libyaml-0-2 \
+                libyaml-dev \
+                libcap-ng-dev \
+                libcap-ng0 \
+                libmagic-dev \
+                libnetfilter-queue-dev \
+                libnetfilter-queue1 \
+                libnfnetlink-dev \
+                libnfnetlink0 \
+                libnuma-dev \
+                libhiredis-dev \
+                libjansson-dev \
+                libevent-dev \
+                libevent-pthreads-2.1-7 \
+                make \
+                parallel \
+                python3-yaml \
+                rustc \
+                software-properties-common \
+                sudo \
+                zlib1g \
+                zlib1g-dev \
+                exuberant-ctags \
+                unzip \
+                curl \
+                time \
+                wget \
+                dpdk-dev
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - name: Extracting suricata-verify
+        run: tar xf prep/suricata-verify.tar.gz
+      - name: Fix kernel mmap rnd bits
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: ./autogen.sh
+      - run: ./configure --enable-dpdk --disable-shared --enable-gccprotect --localstatedir=/var --prefix=/usr --sysconfdir=/etc
+        env:
+          CC: "clang-18"
+          CFLAGS: "-g -fsanitize=address -fno-omit-frame-pointer"
+          ac_cv_func_malloc_0_nonnull: "yes"
+          ac_cv_func_realloc_0_nonnull: "yes"
+      - run: make -j ${{ env.CPUS }}
+        env:
+          CC: "clang-18"
+      - run: |
+          ./qa/unix.sh "suricata-verify/"
+
+  ubuntu-24-04-asan-afpdpdk:
+    name: Ubuntu 24.04 (afpacket and dpdk live tests with ASAN)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
+      options: --privileged
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      - name: Cache ~/.cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          apt update
+          apt -y install \
+                libpcre2-dev \
+                build-essential \
+                autoconf \
+                automake \
+                llvm-18-dev \
+                cargo \
+                cbindgen \
+                clang-18 \
+                git \
+                jq \
+                inetutils-ping \
+                libc++-dev \
+                libc++abi-dev \
+                libtool \
+                libpcap-dev \
+                libnet1-dev \
+                libyaml-0-2 \
+                libyaml-dev \
+                libcap-ng-dev \
+                libcap-ng0 \
+                libmagic-dev \
+                libnetfilter-queue-dev \
+                libnetfilter-queue1 \
+                libnfnetlink-dev \
+                libnfnetlink0 \
+                libnuma-dev \
+                libhiredis-dev \
+                libjansson-dev \
+                libevent-dev \
+                libevent-pthreads-2.1-7 \
+                make \
+                parallel \
+                python3-yaml \
+                rustc \
+                software-properties-common \
+                sudo \
+                zlib1g \
+                zlib1g-dev \
+                exuberant-ctags \
+                unzip \
+                curl \
+                time \
+                wget \
+                dpdk-dev
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - name: Fix kernel mmap rnd bits
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - run: ./autogen.sh
+      - run: ./configure --enable-dpdk --disable-shared --enable-gccprotect --localstatedir=/var --prefix=/usr --sysconfdir=/etc
+        env:
+          CC: "clang-18"
+          CFLAGS: "-g -fsanitize=address -fno-omit-frame-pointer"
+          ac_cv_func_malloc_0_nonnull: "yes"
+          ac_cv_func_realloc_0_nonnull: "yes"
+      - run: make -j ${{ env.CPUS }}
+        env:
+          CC: "clang-18"
+      # IDS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ids.yaml"
+      # IPS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ips.yaml"
+      # AF_PACKET tests
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "2" "autofp"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "2" "workers"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "3" "autofp"
+      - run: |
+          ./.github/workflows/live/afp-ids.sh "3" "workers"
+      - run: |
+          ./.github/workflows/live/pcap.sh "autofp"
+      - run: |
+          ./.github/workflows/live/pcap.sh "single"
+  
+  ubuntu-22-04-cov-fuzz:
+    name: Ubuntu 22.04 (fuzz corpus coverage)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+      options: --privileged
+    needs: [prepare-deps, prepare-cbindgen]
+    steps:
+      - name: Cache ~/.cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
       - name: Install dependencies
         run: |
           apt update
@@ -1525,16 +2040,15 @@ jobs:
                 libnfnetlink0 \
                 libnuma-dev \
                 libhiredis-dev \
-                liblua5.1-dev \
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 make \
                 parallel \
                 python3-yaml \
                 software-properties-common \
+                sudo \
                 zlib1g \
                 zlib1g-dev \
                 exuberant-ctags \
@@ -1545,21 +2059,22 @@ jobs:
                 dpdk-dev
       # packaged Rust version is too old for coverage, so get from rustup
       - name: Install Rust
-        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.63.0 -y
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.67.1 -y
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
+      - name: Fix kernel mmap rnd bits
+      # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+      # high-entropy ASLR in much newer kernels that GitHub runners are
+      # using leading to random crashes: https://github.com/actions/runner-images/issues/9491
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - run: ./autogen.sh
-      - run: ./configure --with-gnu-ld --enable-fuzztargets --disable-shared --enable-gccprotect
+      - run: ./configure --enable-warnings --with-gnu-ld --enable-fuzztargets --disable-shared --enable-gccprotect
         env:
           LIB_FUZZING_ENGINE: "fail_to_onefile_driver"
           CC: "clang-14"
@@ -1569,7 +2084,7 @@ jobs:
           CXXFLAGS: "-fprofile-instr-generate -fcoverage-mapping -O0 -g -fno-strict-aliasing -fsanitize=address -fno-omit-frame-pointer -DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1 -stdlib=libc++ -Wimplicit-int-float-conversion -Wimplicit-int-conversion"
           ac_cv_func_malloc_0_nonnull: "yes"
           ac_cv_func_realloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
         env:
           CC: "clang-14"
           CXX: "clang++-14"
@@ -1578,7 +2093,7 @@ jobs:
       - run: llvm-profdata-14 merge -o default.profdata $(find /tmp/ -name '*.profraw')
       - run: llvm-cov-14 show ./src/suricata -instr-profile=default.profdata --show-instantiations --ignore-filename-regex="^/root/.*" > coverage.txt
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@d9f34f8cd5cb3b3eb79b3e4b5dae3a16df499a70
+        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3
         with:
           fail_ci_if_error: false
           flags: fuzzcorpus
@@ -1590,10 +2105,13 @@ jobs:
     needs: [prepare-deps, prepare-cbindgen]
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -1622,7 +2140,6 @@ jobs:
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 libpcre2-dev \
                 make \
@@ -1634,22 +2151,18 @@ jobs:
                 zlib1g-dev \
                 exuberant-ctags \
                 dpdk-dev
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: CFLAGS="$DEFAULT_CFLAGS -DNDEBUG" ./configure --enable-unittests
-      - run: make -j2
+      - run: CFLAGS="$DEFAULT_CFLAGS -DNDEBUG" ./configure --enable-warnings --enable-unittests
+      - run: make -j ${{ env.CPUS }}
       - run: make check
       - run: make dist
       - name: Extracting suricata-verify
@@ -1676,13 +2189,16 @@ jobs:
     name: Ubuntu 20.04 (unsupported rust)
     runs-on: ubuntu-latest
     container: ubuntu:20.04
-    needs: debian-12-dist
+    needs: ubuntu-22-04-dist
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
       - name: Install dependencies
         run: |
           apt update
@@ -1706,7 +2222,6 @@ jobs:
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 libpcre2-dev \
                 make \
@@ -1718,7 +2233,7 @@ jobs:
       - run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain 1.62.0 -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Download suricata.tar.gz
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: dist
       - run: tar zxvf suricata-*.tar.gz --strip-components=1
@@ -1733,16 +2248,21 @@ jobs:
   ubuntu-22-04-debug-validation:
     name: Ubuntu 22.04 (Debug Validation)
     runs-on: ubuntu-22.04
-    container: ubuntu:22.04
+    container:
+      image: ubuntu:22.04
+      options: --privileged
     needs: [prepare-deps, prepare-cbindgen]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -1771,36 +2291,37 @@ jobs:
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 make \
                 parallel \
                 python3-yaml \
                 rustc \
                 software-properties-common \
+                sudo \
                 zlib1g \
                 zlib1g-dev \
                 exuberant-ctags
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
+      - name: Fix kernel mmap rnd bits
+      # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+      # high-entropy ASLR in much newer kernels that GitHub runners are
+      # using leading to random crashes: https://github.com/actions/runner-images/issues/9491
+        run: sudo sysctl vm.mmap_rnd_bits=28
       - run: ./autogen.sh
-      - run: ./configure --enable-debug-validation
+      - run: ./configure --enable-warnings --enable-debug-validation
         env:
           CFLAGS: "${{ env.DEFAULT_CFLAGS }} -Wshadow -fsanitize=address -fno-omit-frame-pointer"
           LDFLAGS: "-fsanitize=address" 
           ac_cv_func_malloc_0_nonnull: "yes"
           ac_cv_func_realloc_0_nonnull: "yes"
-      - run: make -j2
+      - run: make -j ${{ env.CPUS }}
       - run: make check
       - name: Extracting suricata-verify
         run: tar xf prep/suricata-verify.tar.gz
@@ -1817,10 +2338,13 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -1848,7 +2372,6 @@ jobs:
                 libnfnetlink0 \
                 libhiredis-dev \
                 libjansson-dev \
-                libjansson-dev \
                 libpython2.7 \
                 make \
                 rustc \
@@ -1856,33 +2379,39 @@ jobs:
                 zlib1g \
                 zlib1g-dev
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: AFL_HARDEN=1 ac_cv_func_realloc_0_nonnull=yes ac_cv_func_malloc_0_nonnull=yes CFLAGS="-fsanitize=address -fno-omit-frame-pointer" CXXFLAGS=$CFLAGS CC=afl-clang-fast CXX=afl-clang-fast++ LDFLAGS="-fsanitize=address" ./configure --enable-fuzztargets --disable-shared
-      - run: AFL_HARDEN=1 make -j2
+      - run: AFL_HARDEN=1 ac_cv_func_realloc_0_nonnull=yes ac_cv_func_malloc_0_nonnull=yes CFLAGS="-fsanitize=address -fno-omit-frame-pointer" CXXFLAGS=$CFLAGS CC=afl-clang-fast CXX=afl-clang-fast++ LDFLAGS="-fsanitize=address" ./configure --enable-warnings --enable-fuzztargets --disable-shared
+      - run: AFL_HARDEN=1 make -j ${{ env.CPUS }}
 
   ubuntu-22-04-netmap-build:
     name: Ubuntu 22.04 (Netmap build)
     needs: [prepare-deps, prepare-cbindgen]
     runs-on: ubuntu-22.04
     steps:
+      - name: Restore Cache Netmap
+        uses: actions/cache/restore@v4
+        id: netmap-cache
+        with:
+          path: netmap/
+          key: netmap-git
+
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -1911,7 +2440,6 @@ jobs:
                   libjansson-dev \
                   libevent-dev \
                   libevent-pthreads-2.1-7 \
-                  libjansson-dev \
                   libpython2.7 \
                   make \
                   parallel \
@@ -1930,35 +2458,79 @@ jobs:
                 linux-headers-$(uname -r)
 
       - name: Checkout Netmap repository
-        uses: actions/checkout@v3.5.3
+        if: steps.netmap-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: luigirizzo/netmap
           # gets cloned to $GITHUB_WORKSPACE/netmap/
           path: netmap/
 
+      - name: Save Netmap Cache
+        if: steps.netmap-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: netmap/
+          key: netmap-git
+
       - name: Compile and install Netmap
         run: |
           cd $GITHUB_WORKSPACE/netmap/LINUX
           ./configure --no-drivers
-          make -j2
+          make -j ${{ env.CPUS }}
           sudo make install
 
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-netmap
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-netmap
+      - run: make -j ${{ env.CPUS }}
       - run: ./src/suricata --build-info | grep -E "Netmap support:\s+yes"
+
+  ubuntu-22-04-minimal-recommended-build:
+    name: Ubuntu 22.04 (Minimal/Recommended Build)
+    needs: [prepare-deps, prepare-cbindgen]
+    runs-on: ubuntu-22.04
+    steps:
+      # Cache Rust stuff.
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install git dependencies
+        run: |
+          sudo apt update
+          sudo apt -y install \
+            git \
+            libtool
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: prep
+          path: prep
+      - run: tar xf prep/libhtp.tar.gz
+      - run: tar xf prep/suricata-update.tar.gz
+      - run: tar xf prep/suricata-verify.tar.gz
+      - run: ./autogen.sh
+      
+      - name: Install minimal dependencies
+        run: ./scripts/docs-ubuntu-debian-minimal-build.sh
+
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
+      - run: make -j ${{ env.CPUS }}
+      - run: ./src/suricata --build-info # check if we can run Suricata
 
   ubuntu-22-04-dpdk-build:
     name: Ubuntu 22.04 (DPDK Build)
@@ -1967,15 +2539,18 @@ jobs:
     needs: [ prepare-deps, prepare-cbindgen ]
     strategy:
       matrix:
-        dpdk_version: [ 22.11.3, 21.11.5, 20.11.9, 19.11.14 ]
+        dpdk_version: [ 22.11.4, 21.11.6, 20.11.10, 19.11.14 ]
     steps:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - name: Install dependencies
         run: |
@@ -2004,7 +2579,6 @@ jobs:
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 make \
                 parallel \
@@ -2041,22 +2615,24 @@ jobs:
           ninja -C build install
           ldconfig
           cd $HOME
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-dpdk
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-dpdk
+      - run: make -j ${{ env.CPUS }}
       - run: make check
+      # IDS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ids.yaml"
+      # IPS config
+      - run: |
+          ./.github/workflows/live/dpdk.sh ".github/workflows/dpdk/suricata-null-ips.yaml"
 
   debian-12:
     name: Debian 12
@@ -2066,10 +2642,13 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: apt update
       - run: |
@@ -2077,8 +2656,6 @@ jobs:
               autoconf \
               automake \
               build-essential \
-              cargo \
-              cbindgen \
               cmake \
               curl \
               dpdk-dev \
@@ -2100,8 +2677,6 @@ jobs:
               libmaxminddb-dev \
               libjansson-dev \
               libjansson4 \
-              liblua5.1-dev \
-              libnspr4-dev \
               libnuma-dev \
               liblz4-dev \
               libssl-dev \
@@ -2109,7 +2684,6 @@ jobs:
               pkg-config \
               python3 \
               python3-yaml \
-              rustc \
               sphinx-doc \
               sphinx-common \
               texlive-latex-base \
@@ -2118,22 +2692,27 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
+      - name: Install Rust
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $(grep rust-version rust/Cargo.toml.in|sed 's/\"//g'|awk '{print $3}') -y
+      - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: tar xf prep/suricata-verify.tar.gz
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-unittests
+      - run: make -j ${{ env.CPUS }}
       - run: make check
         # -j2 caused random failures during cargo vendor
       - run: make distcheck
         env:
-          DISTCHECK_CONFIGURE_FLAGS: "--enable-unittests --enable-debug --enable-lua --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk"
+          DISTCHECK_CONFIGURE_FLAGS: "--enable-unittests --enable-debug --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk"
       - run: test -e doc/userguide/suricata.1
       - run: test -e doc/userguide/userguide.pdf
       - name: Building Rust documentation
@@ -2145,18 +2724,34 @@ jobs:
       - run: suricata-update -V
       - run: suricatasc -h
 
-  debian-12-dist:
-    name: Debian 12 Dist Builder
+  ubuntu-22-04-dist:
+    name: Ubuntu 22.04 Dist Builder
     runs-on: ubuntu-latest
-    container: debian:12
-    needs: [prepare-deps]
+    container: ubuntu:22.04
+    needs: [prepare-deps, prepare-cbindgen]
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      # Setup apt package caching.
+      - name: Setup apt package caching
+        run: |
+          echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' >> /etc/apt/apt.conf.d/99cache
+          echo 'APT::Keep-Downloaded-Packages "false";' >> /etc/apt/apt.conf.d/99cache
+          rm -f /etc/apt/apt.conf.d/docker-clean
+
+      - name: Cache apt downloads
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ github.job }}-apt
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: apt update
       - run: |
@@ -2165,7 +2760,6 @@ jobs:
               automake \
               build-essential \
               cargo \
-              cbindgen \
               cmake \
               curl \
               git \
@@ -2185,7 +2779,6 @@ jobs:
               libmagic-dev \
               libjansson-dev \
               libjansson4 \
-              libnspr4-dev \
               liblz4-dev \
               libssl-dev \
               liblzma-dev \
@@ -2201,13 +2794,15 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
       - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure
       - run: make dist
@@ -2217,7 +2812,7 @@ jobs:
         run: |
           mkdir dist
           mv suricata-*.tar.gz dist
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         name: Uploading distribution
         with:
           name: dist
@@ -2231,10 +2826,13 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: apt update
       - run: |
@@ -2263,8 +2861,6 @@ jobs:
               libmaxminddb-dev \
               libjansson-dev \
               libjansson4 \
-              liblua5.1-dev \
-              libnspr4-dev \
               libnuma-dev \
               liblz4-dev \
               libssl-dev \
@@ -2280,25 +2876,22 @@ jobs:
               texlive-latex-extra \
               zlib1g \
               zlib1g-dev
-      - name: Install Rust
-        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain ${RUST_VERSION_MIN} -y
-      - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
+      - name: Install Rust
+        run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $(grep rust-version rust/Cargo.toml.in|sed 's/\"//g'|awk '{print $3}') -y
+      - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - uses: ./.github/actions/install-cbindgen
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
       - run: tar xf prep/suricata-verify.tar.gz
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests --enable-debug --enable-lua --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-unittests --enable-debug --enable-geoip --enable-profiling --enable-profiling-locks --enable-dpdk
+      - run: make -j ${{ env.CPUS }}
       - run: make check
       - name: Building Rust documentation
         run: make doc
@@ -2317,10 +2910,13 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           echo "deb http://deb.debian.org/debian bullseye-backports main" >> /etc/apt/sources.list
@@ -2332,7 +2928,6 @@ jobs:
                 ccache \
                 curl \
                 git \
-                gosu \
                 jq \
                 libpcre2-dev \
                 libpcap-dev   \
@@ -2344,7 +2939,6 @@ jobs:
                 libmagic-dev \
                 libjansson-dev \
                 libgeoip-dev \
-                liblua5.1-dev \
                 libhiredis-dev \
                 libevent-dev \
                 libtool \
@@ -2362,21 +2956,18 @@ jobs:
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $RUST_VERSION_KNOWN -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests --enable-fuzztargets --enable-ebpf --enable-ebpf-build
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-unittests --enable-fuzztargets --enable-ebpf --enable-ebpf-build
+      - run: make -j ${{ env.CPUS }}
       - run: make check
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
@@ -2393,10 +2984,13 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
 
       - run: |
           apt update
@@ -2407,7 +3001,6 @@ jobs:
                 ccache \
                 curl \
                 git \
-                gosu \
                 jq \
                 libpcre2-dev \
                 libpcap-dev   \
@@ -2419,7 +3012,6 @@ jobs:
                 libmagic-dev \
                 libjansson-dev \
                 libgeoip-dev \
-                liblua5.1-dev \
                 libhiredis-dev \
                 libevent-dev \
                 libtool \
@@ -2435,21 +3027,18 @@ jobs:
       - name: Install Rust
         run: curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain $RUST_VERSION_KNOWN -y
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xf prep/libhtp.tar.gz
       - run: tar xf prep/suricata-update.tar.gz
-      - name: Setup cbindgen
-        run: |
-          mkdir -p $HOME/.cargo/bin
-          cp prep/cbindgen $HOME/.cargo/bin
-          chmod 755 $HOME/.cargo/bin/cbindgen
+      - uses: ./.github/actions/install-cbindgen
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests --enable-fuzztargets
-      - run: make -j2
+      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-warnings --enable-unittests --enable-fuzztargets
+      - run: make -j ${{ env.CPUS }}
       - run: make check
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
@@ -2465,14 +3054,15 @@ jobs:
     steps:
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
+          path: ~/.cargo/registry
+          key: cargo-registry
       - run: |
          brew install \
           autoconf \
           automake \
+          cbindgen \
           curl \
           hiredis \
           jansson \
@@ -2481,33 +3071,43 @@ jobs:
           libnet \
           libtool \
           libyaml \
-          lua \
+          pcre2 \
           pkg-config \
           python \
           rust \
           xz
-      - name: Install cbindgen
-        run: cargo install --debug --version 0.24.3 cbindgen
       - run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - run: pip3 install PyYAML
-      - uses: actions/checkout@v3.5.3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
       - name: Downloading prep archive
-        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
       - run: tar xvf prep/libhtp.tar.gz
       - run: tar xvf prep/suricata-update.tar.gz
+      - name: Create Python virtual environment
+        run: python3 -m venv ./testenv
+      - name: Install PyYAML
+        run: |
+          . ./testenv/bin/activate
+          pip install pyyaml
       - run: ./autogen.sh
-      - run: CFLAGS="${DEFAULT_CFLAGS}" ./configure --enable-unittests
-      - run: make -j2
+      - run: CPATH="$HOMEBREW_PREFIX/include:$CPATH" LIBRARY_PATH="$HOMEBREW_PREFIX/lib:$LIBRARY_PATH" PATH="/opt/homebrew/opt/libtool/libexec/gnubin:$PATH" CFLAGS="${DEFAULT_CFLAGS}" ./configure  --enable-warnings --enable-unittests --prefix="$HOME/.local/"
+      - run: CPATH="$HOMEBREW_PREFIX/include:$CPATH" LIBRARY_PATH="$HOMEBREW_PREFIX/lib:$LIBRARY_PATH" PATH="/opt/homebrew/opt/libtool/libexec/gnubin:$PATH" CFLAGS="${DEFAULT_CFLAGS}" make -j2
       # somehow it gets included by some C++ stdlib header (case unsensitive)
       - run: rm libhtp/VERSION && make check
       - run: tar xf prep/suricata-verify.tar.gz
       - name: Running suricata-verify
-        run: python3 ./suricata-verify/run.py -q --debug-failed
+        run: |
+          . ./testenv/bin/activate
+          python3 ./suricata-verify/run.py -q --debug-failed
       - run: make install
-      - run: suricata-update -V
+      - name: Check Suricata-Update
+        run: |
+          . ./testenv/bin/activate
+          which suricata-update
+          python3 $(which suricata-update) -V
       - run: suricatasc -h
 
   windows-msys2-mingw64-npcap:
@@ -2519,11 +3119,10 @@ jobs:
         shell: msys2 {0}
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
-      - uses: actions/checkout@v3.5.3
+          path: ~/.cargo/registry
+          key: cargo-registry
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -2533,8 +3132,9 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -2555,7 +3155,7 @@ jobs:
       - name: Build
         run: |
           ./autogen.sh
-          CFLAGS="-ggdb -Werror" ./configure --enable-unittests --enable-gccprotect --disable-gccmarch-native --disable-shared --with-libpcap-includes=/npcap/Include --with-libpcap-libraries=/npcap/Lib/x64
+          CFLAGS="-ggdb -Werror" ./configure --enable-warnings --enable-unittests --enable-gccprotect --disable-gccmarch-native --disable-shared --with-libpcap-includes=/npcap/Include --with-libpcap-libraries=/npcap/Lib/x64
           make -j3
       - name: Run
         run: |
@@ -2575,11 +3175,10 @@ jobs:
         shell: msys2 {0}
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
-      - uses: actions/checkout@v3.5.3
+          path: ~/.cargo/registry
+          key: cargo-registry
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -2589,8 +3188,9 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -2600,7 +3200,7 @@ jobs:
       - name: Build
         run: |
           ./autogen.sh
-          CFLAGS="-ggdb -Werror" ./configure --enable-unittests --enable-gccprotect --disable-gccmarch-native --disable-shared --with-libpcap-includes=/npcap/Include --with-libpcap-libraries=/npcap/Lib/x64
+          CFLAGS="-ggdb -Werror" ./configure --enable-warnings --enable-unittests --enable-gccprotect --disable-gccmarch-native --disable-shared --with-libpcap-includes=/npcap/Include --with-libpcap-libraries=/npcap/Lib/x64
           make -j3
       - name: Run
         run: |
@@ -2619,11 +3219,10 @@ jobs:
         shell: msys2 {0}
     steps:
       - name: Cache ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
-          path: ~/.cargo
-          key: ${{ github.job }}-cargo
-      - uses: actions/checkout@v3.5.3
+          path: ~/.cargo/registry
+          key: cargo-registry
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -2633,8 +3232,9 @@ jobs:
       # preinstalled one to be picked up by configure
       - name: cbindgen
         run: cargo install --root /usr --force --debug --version 0.24.3 cbindgen
-      - uses: actions/checkout@v3.5.3
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: prep
           path: prep
@@ -2649,7 +3249,7 @@ jobs:
       - name: Build
         run: |
           ./autogen.sh
-          CFLAGS="-ggdb -Werror" ./configure --enable-gccprotect --disable-gccmarch-native --disable-shared --enable-windivert --with-windivert-include=/windivert/WinDivert-1.4.3-A/include --with-windivert-libraries=/windivert/WinDivert-1.4.3-A/x86_64
+          CFLAGS="-ggdb -Werror" ./configure --enable-warnings --enable-gccprotect --disable-gccmarch-native --disable-shared --enable-windivert --with-windivert-include=/windivert/WinDivert-1.4.3-A/include --with-windivert-libraries=/windivert/WinDivert-1.4.3-A/x86_64
           make -j3
       - name: Run
         run: |
@@ -2657,3 +3257,77 @@ jobs:
           PATH="$PATH:$(pwd)" ./src/suricata --build-info
       - run: make install
 
+  pf-ring:
+    name: PF_RING
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    needs: [prepare-deps, ubuntu-22-04-dist]
+    steps:
+      # Cache Rust stuff.
+      - name: Cache cargo registry
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: ~/.cargo/registry
+          key: cargo-registry
+
+      - name: Cache RPMs
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        with:
+          path: /var/cache/dnf
+          key: ${{ github.job }}-dnf
+      - run: echo "keepcache=1" >> /etc/dnf/dnf.conf
+
+      - name: Determine number of CPUs
+        run: echo CPUS=$(nproc --all) >> $GITHUB_ENV
+
+      - name: Install system packages
+        run: |
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf -y install \
+                autoconf \
+                automake \
+                diffutils \
+                numactl-devel \
+                dpdk-devel \
+                file-devel \
+                gcc \
+                gcc-c++ \
+                git \
+                jansson-devel \
+                libtool \
+                libyaml-devel \
+                libnfnetlink-devel \
+                libnetfilter_queue-devel \
+                libnet-devel \
+                libcap-ng-devel \
+                libevent-devel \
+                libmaxminddb-devel \
+                libpcap-devel \
+                libtool \
+                lz4-devel \
+                make \
+                pcre2-devel \
+                pkgconfig \
+                python3-devel \
+                python3-sphinx \
+                python3-yaml \
+                rust-toolset \
+                sudo \
+                which \
+                zlib-devel
+
+      - name: Install PF_RING
+        run: |
+          curl https://packages.ntop.org/centos-stable/ntop.repo > /etc/yum.repos.d/ntop.repo
+          dnf install -y pfring
+
+      - name: Download suricata.tar.gz
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: dist
+      - run: tar xf suricata-*.tar.gz --strip-components=1
+      - run: ./configure --enable-pfring
+      - run: make -j ${CPUS}
+      - run: make install
+      - run: test -e /usr/local/lib/suricata/pfring.so

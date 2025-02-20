@@ -77,7 +77,7 @@ static int PacketAlertHandle(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det
     const DetectThresholdData *td = NULL;
     const SigMatchData *smd;
 
-    if (!(PKT_IS_IPV4(p) || PKT_IS_IPV6(p))) {
+    if (!(PacketIsIPv4(p) || PacketIsIPv6(p))) {
         SCReturnInt(1);
     }
 
@@ -208,7 +208,7 @@ static void PacketApplySignatureActions(Packet *p, const Signature *s, const Pac
             // nothing to set in the packet
         } else if (pa->action & (ACTION_ALERT | ACTION_CONFIG)) {
             // nothing to set in the packet
-        } else {
+        } else if (pa->action != 0) {
             DEBUG_VALIDATE_BUG_ON(1); // should be unreachable
         }
 
@@ -272,7 +272,7 @@ static inline PacketAlert PacketAlertSet(
     pa.s = (Signature *)s;
     pa.flags = alert_flags;
     /* Set tx_id if the frame has it */
-    pa.tx_id = (tx_id == UINT64_MAX) ? 0 : tx_id;
+    pa.tx_id = tx_id;
     pa.frame_id = (alert_flags & PACKET_ALERT_FLAG_FRAME) ? det_ctx->frame_id : 0;
     return pa;
 }
@@ -303,7 +303,6 @@ void AlertQueueAppend(DetectEngineThreadCtx *det_ctx, const Signature *s, Packet
 
     SCLogDebug("Appending sid %" PRIu32 ", s->num %" PRIu32 " to alert queue", s->id, s->num);
     det_ctx->alert_queue_size++;
-    return;
 }
 
 /** \internal
@@ -317,10 +316,15 @@ static int AlertQueueSortHelper(const void *a, const void *b)
 {
     const PacketAlert *pa0 = a;
     const PacketAlert *pa1 = b;
-    if (pa1->num == pa0->num)
+    if (pa1->num == pa0->num) {
+        if (pa1->tx_id == PACKET_ALERT_NOTX) {
+            return -1;
+        } else if (pa0->tx_id == PACKET_ALERT_NOTX) {
+            return 1;
+        }
         return pa0->tx_id < pa1->tx_id ? 1 : -1;
-    else
-        return pa0->num > pa1->num ? 1 : -1;
+    }
+    return pa0->num > pa1->num ? 1 : -1;
 }
 
 /** \internal
@@ -372,10 +376,7 @@ void PacketAlertFinalize(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx
     qsort(det_ctx->alert_queue, det_ctx->alert_queue_size, sizeof(PacketAlert),
             AlertQueueSortHelper);
 
-    uint16_t i = 0;
-    uint16_t max_pos = det_ctx->alert_queue_size;
-
-    while (i < max_pos) {
+    for (uint16_t i = 0; i < det_ctx->alert_queue_size; i++) {
         PacketAlert *pa = &det_ctx->alert_queue[i];
         const Signature *s = de_ctx->sig_array[pa->num];
         int res = PacketAlertHandle(de_ctx, det_ctx, s, p, pa);
@@ -407,22 +408,30 @@ void PacketAlertFinalize(DetectEngineCtx *de_ctx, DetectEngineThreadCtx *det_ctx
         }
 
         /* Thresholding removes this alert */
-        if (res == 0 || res == 2 || (s->flags & SIG_FLAG_NOALERT)) {
+        if (res == 0 || res == 2 || (s->action & (ACTION_ALERT | ACTION_PASS)) == 0) {
+            SCLogDebug("sid:%u: skipping alert because of thresholding (res=%d) or NOALERT (%02x)",
+                    s->id, res, s->action);
             /* we will not copy this to the AlertQueue */
             p->alerts.suppressed++;
         } else if (p->alerts.cnt < packet_alert_max) {
             p->alerts.alerts[p->alerts.cnt] = *pa;
             SCLogDebug("Appending sid %" PRIu32 " alert to Packet::alerts at pos %u", s->id, i);
 
-            /* pass "alert" found, we're done */
-            if (pa->action & ACTION_PASS) {
+            /* pass w/o alert found, we're done. Alert is not logged. */
+            if ((pa->action & (ACTION_PASS | ACTION_ALERT)) == ACTION_PASS) {
+                SCLogDebug("sid:%u: is a pass rule, so break out of loop", s->id);
                 break;
             }
             p->alerts.cnt++;
+
+            /* pass with alert, we're done. Alert is logged. */
+            if (pa->action & ACTION_PASS) {
+                SCLogDebug("sid:%u: is a pass rule, so break out of loop", s->id);
+                break;
+            }
         } else {
             p->alerts.discarded++;
         }
-        i++;
     }
 
     /* At this point, we should have all the new alerts. Now check the tag

@@ -61,7 +61,7 @@ static int JsonDHCPLogger(ThreadVars *tv, void *thread_data,
     LogDHCPLogThread *thread = thread_data;
     LogDHCPFileCtx *ctx = thread->dhcplog_ctx;
 
-    if (!rs_dhcp_logger_do_log(ctx->rs_logger, tx)) {
+    if (!SCDhcpLoggerDoLog(ctx->rs_logger, tx)) {
         return TM_ECODE_OK;
     }
 
@@ -70,9 +70,9 @@ static int JsonDHCPLogger(ThreadVars *tv, void *thread_data,
         return TM_ECODE_FAILED;
     }
 
-    rs_dhcp_logger_log(ctx->rs_logger, tx, js);
+    SCDhcpLoggerLog(ctx->rs_logger, tx, js);
 
-    OutputJsonBuilderBuffer(js, thread->thread);
+    OutputJsonBuilderBuffer(tv, p, p->flow, js, thread->thread);
     jb_free(js);
 
     return TM_ECODE_OK;
@@ -81,7 +81,7 @@ static int JsonDHCPLogger(ThreadVars *tv, void *thread_data,
 static void OutputDHCPLogDeInitCtxSub(OutputCtx *output_ctx)
 {
     LogDHCPFileCtx *dhcplog_ctx = (LogDHCPFileCtx *)output_ctx->data;
-    rs_dhcp_logger_free(dhcplog_ctx->rs_logger);
+    SCDhcpLoggerFree(dhcplog_ctx->rs_logger);
     SCFree(dhcplog_ctx);
     SCFree(output_ctx);
 }
@@ -105,7 +105,7 @@ static OutputInitResult OutputDHCPLogInitSub(ConfNode *conf,
     output_ctx->data = dhcplog_ctx;
     output_ctx->DeInit = OutputDHCPLogDeInitCtxSub;
 
-    dhcplog_ctx->rs_logger = rs_dhcp_logger_new(conf);
+    dhcplog_ctx->rs_logger = SCDhcpLoggerNew(conf);
 
     AppLayerParserRegisterLogger(IPPROTO_UDP, ALPROTO_DHCP);
 
@@ -148,5 +148,5 @@ void JsonDHCPLogRegister(void)
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonDHCPLog", "eve-log.dhcp",
             OutputDHCPLogInitSub, ALPROTO_DHCP, JsonDHCPLogger, JsonDHCPLogThreadInit,
-            JsonDHCPLogThreadDeinit, NULL);
+            JsonDHCPLogThreadDeinit);
 }

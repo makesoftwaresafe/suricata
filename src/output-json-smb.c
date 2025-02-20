@@ -59,7 +59,7 @@ static int JsonSMBLogger(ThreadVars *tv, void *thread_data,
     }
     jb_close(jb);
 
-    OutputJsonBuilderBuffer(jb, thread);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, thread);
 
     jb_free(jb);
     return TM_ECODE_OK;
@@ -80,7 +80,7 @@ void JsonSMBLogRegister(void)
 {
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonSMBLog", "eve-log.smb", SMBLogInitSub,
-            ALPROTO_SMB, JsonSMBLogger, JsonLogThreadInit, JsonLogThreadDeinit, NULL);
+            ALPROTO_SMB, JsonSMBLogger, JsonLogThreadInit, JsonLogThreadDeinit);
 
     SCLogDebug("SMB JSON logger registered.");
 }

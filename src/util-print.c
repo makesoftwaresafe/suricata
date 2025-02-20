@@ -66,28 +66,7 @@ void PrintRawLineHexBuf(char *retbuf, uint32_t retbuflen, const uint8_t *buf, ui
     }
 }
 
-void PrintRawJsonFp(FILE *fp, uint8_t *buf, uint32_t buflen)
-{
-#define BUFFER_LENGTH 2048
-    char nbuf[BUFFER_LENGTH] = "";
-    uint32_t offset = 0;
-
-    for (uint32_t u = 0; u < buflen; u++) {
-        if (buf[u] == '\\' || buf[u] == '/' || buf[u] == '\"') {
-            PrintBufferData(nbuf, &offset, BUFFER_LENGTH,
-                             "\\%c", buf[u]);
-        } else if (isprint(buf[u])) {
-            PrintBufferData(nbuf, &offset, BUFFER_LENGTH,
-                             "%c", buf[u]);
-        } else {
-            PrintBufferData(nbuf, &offset, BUFFER_LENGTH,
-                            "\\\\x%02X", buf[u]);
-        }
-    }
-    fprintf(fp, "%s", nbuf);
-}
-
-void PrintRawUriFp(FILE *fp, uint8_t *buf, uint32_t buflen)
+void PrintRawUriFp(FILE *fp, const uint8_t *buf, uint32_t buflen)
 {
 #define BUFFER_LENGTH 2048
     char nbuf[BUFFER_LENGTH] = "";
@@ -111,10 +90,10 @@ void PrintRawUriFp(FILE *fp, uint8_t *buf, uint32_t buflen)
     fprintf(fp, "%s", nbuf);
 }
 
-void PrintRawUriBuf(char *retbuf, uint32_t *offset, uint32_t retbuflen,
-                    uint8_t *buf, uint32_t buflen)
+void PrintRawUriBuf(
+        char *retbuf, uint32_t *offset, uint32_t retbuflen, const uint8_t *buf, size_t buflen)
 {
-    for (uint32_t u = 0; u < buflen; u++) {
+    for (size_t u = 0; u < buflen; u++) {
         if (isprint(buf[u]) && buf[u] != '\"') {
             if (buf[u] == '\\') {
                 PrintBufferData(retbuf, offset, retbuflen,
@@ -128,8 +107,6 @@ void PrintRawUriBuf(char *retbuf, uint32_t *offset, uint32_t retbuflen,
                             "\\x%02X", buf[u]);
         }
     }
-
-    return;
 }
 
 void PrintRawDataFp(FILE *fp, const uint8_t *buf, uint32_t buflen)
@@ -213,8 +190,6 @@ void PrintRawDataToBuffer(uint8_t *dst_buf, uint32_t *dst_buf_offset_ptr, uint32
     }
     if (ch != 16)
         PrintBufferData((char *)dst_buf, dst_buf_offset_ptr, dst_buf_size, "\n");
-
-    return;
 }
 
 void PrintStringsToBuffer(uint8_t *dst_buf, uint32_t *dst_buf_offset_ptr, uint32_t dst_buf_size,
@@ -229,13 +204,7 @@ void PrintStringsToBuffer(uint8_t *dst_buf, uint32_t *dst_buf_offset_ptr, uint32
         }
     }
     dst_buf[dst_buf_size - 1] = 0;
-
-    return;
 }
-
-#ifndef s6_addr16
-# define s6_addr16 __u6_addr.__u6_addr16
-#endif
 
 static const char *PrintInetIPv6(const void *src, char *dst, socklen_t size)
 {

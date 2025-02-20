@@ -48,6 +48,7 @@
 
 #include "util-error.h"
 #include "util-debug.h"
+#include "util-validate.h"
 #include "util-cidr.h"
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
@@ -63,7 +64,7 @@ void SigGroupHeadInitDataFree(SigGroupHeadInitData *sghid)
         sghid->match_array = NULL;
     }
     if (sghid->sig_array != NULL) {
-        SCFree(sghid->sig_array);
+        SCFreeAligned(sghid->sig_array);
         sghid->sig_array = NULL;
     }
     if (sghid->app_mpms != NULL) {
@@ -91,9 +92,12 @@ static SigGroupHeadInitData *SigGroupHeadInitDataAlloc(uint32_t size)
         return NULL;
 
     /* initialize the signature bitarray */
-    sghid->sig_size = size;
-    if ((sghid->sig_array = SCCalloc(1, sghid->sig_size)) == NULL)
+    size = sghid->sig_size = size + 16 - (size % 16);
+    void *ptr = SCMallocAligned(sghid->sig_size, 16);
+    if (ptr == NULL)
         goto error;
+    memset(ptr, 0, size);
+    sghid->sig_array = ptr;
 
     return sghid;
 error:
@@ -181,8 +185,6 @@ void SigGroupHeadFree(const DetectEngineCtx *de_ctx, SigGroupHead *sgh)
 
     PrefilterCleanupRuleGroup(de_ctx, sgh);
     SCFree(sgh);
-
-    return;
 }
 
 /**
@@ -279,11 +281,6 @@ int SigGroupHeadHashAdd(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
     return ret;
 }
 
-int SigGroupHeadHashRemove(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
-{
-    return HashListTableRemove(de_ctx->sgh_hash_table, (void *)sgh, 0);
-}
-
 /**
  * \brief Used to lookup a SigGroupHead hash from the detection engine context
  *        SigGroupHead hash table.
@@ -317,8 +314,6 @@ void SigGroupHeadHashFree(DetectEngineCtx *de_ctx)
 
     HashListTableFree(de_ctx->sgh_hash_table);
     de_ctx->sgh_hash_table = NULL;
-
-    return;
 }
 
 /**
@@ -347,7 +342,7 @@ int SigGroupHeadAppendSig(const DetectEngineCtx *de_ctx, SigGroupHead **sgh,
 
     /* enable the sig in the bitarray */
     (*sgh)->init->sig_array[s->num / 8] |= 1 << (s->num % 8);
-
+    (*sgh)->init->max_sig_id = MAX(s->num, (*sgh)->init->max_sig_id);
     return 0;
 
 error:
@@ -374,6 +369,24 @@ int SigGroupHeadClearSigs(SigGroupHead *sgh)
     return 0;
 }
 
+#ifdef __SSE2__
+#include <emmintrin.h>
+static void MergeBitarrays(const uint8_t *src, uint8_t *dst, const uint32_t size)
+{
+#define BYTES 16
+    const uint8_t *srcptr = src;
+    uint8_t *dstptr = dst;
+    for (uint32_t i = 0; i < size; i += 16) {
+        __m128i s = _mm_load_si128((const __m128i *)srcptr);
+        __m128i d = _mm_load_si128((const __m128i *)dstptr);
+        d = _mm_or_si128(s, d);
+        _mm_store_si128((__m128i *)dstptr, d);
+        srcptr += BYTES;
+        dstptr += BYTES;
+    }
+}
+#endif
+
 /**
  * \brief Copies the bitarray holding the sids from the source SigGroupHead to
  *        the destination SigGroupHead.
@@ -387,8 +400,6 @@ int SigGroupHeadClearSigs(SigGroupHead *sgh)
  */
 int SigGroupHeadCopySigs(DetectEngineCtx *de_ctx, SigGroupHead *src, SigGroupHead **dst)
 {
-    uint32_t idx = 0;
-
     if (src == NULL || de_ctx == NULL)
         return 0;
 
@@ -397,19 +408,43 @@ int SigGroupHeadCopySigs(DetectEngineCtx *de_ctx, SigGroupHead *src, SigGroupHea
         if (*dst == NULL)
             goto error;
     }
+    DEBUG_VALIDATE_BUG_ON(src->init->sig_size != (*dst)->init->sig_size);
 
+#ifdef __SSE2__
+    MergeBitarrays(src->init->sig_array, (*dst)->init->sig_array, src->init->sig_size);
+#else
     /* do the copy */
-    for (idx = 0; idx < src->init->sig_size; idx++)
+    for (uint32_t idx = 0; idx < src->init->sig_size; idx++)
         (*dst)->init->sig_array[idx] = (*dst)->init->sig_array[idx] | src->init->sig_array[idx];
-
+#endif
     if (src->init->score)
         (*dst)->init->score = MAX((*dst)->init->score, src->init->score);
 
+    if (src->init->max_sig_id)
+        (*dst)->init->max_sig_id = MAX((*dst)->init->max_sig_id, src->init->max_sig_id);
     return 0;
 
 error:
     return -1;
 }
+
+#ifdef HAVE_POPCNT64
+#include <x86intrin.h>
+static uint32_t Popcnt(const uint8_t *array, const uint32_t size)
+{
+    /* input needs to be a multiple of 8 for u64 casts to work */
+    DEBUG_VALIDATE_BUG_ON(size < 8);
+    DEBUG_VALIDATE_BUG_ON(size % 8);
+
+    uint32_t cnt = 0;
+    uint64_t *ptr = (uint64_t *)array;
+    for (uint64_t idx = 0; idx < size; idx += 8) {
+        cnt += _popcnt64(*ptr);
+        ptr++;
+    }
+    return cnt;
+}
+#endif
 
 /**
  * \brief Updates the SigGroupHead->sig_cnt with the total count of all the
@@ -421,15 +456,42 @@ error:
  */
 void SigGroupHeadSetSigCnt(SigGroupHead *sgh, uint32_t max_idx)
 {
-    uint32_t sig;
-
-    sgh->init->sig_cnt = 0;
-    for (sig = 0; sig < max_idx + 1; sig++) {
+    sgh->init->max_sig_id = MAX(max_idx, sgh->init->max_sig_id);
+#ifdef HAVE_POPCNT64
+    sgh->init->sig_cnt = Popcnt(sgh->init->sig_array, sgh->init->sig_size);
+#else
+    uint32_t cnt = 0;
+    for (uint32_t sig = 0; sig < sgh->init->max_sig_id + 1; sig++) {
         if (sgh->init->sig_array[sig / 8] & (1 << (sig % 8)))
-            sgh->init->sig_cnt++;
+            cnt++;
     }
+    sgh->init->sig_cnt = cnt;
+#endif
+}
 
-    return;
+/**
+ * \brief Finds if two Signature Group Heads are the same.
+ *
+ * \param sgha First SGH to be compared
+ * \param sghb Secornd SGH to be compared
+ *
+ * \return true if they're a match, false otherwise
+ */
+bool SigGroupHeadEqual(const SigGroupHead *sgha, const SigGroupHead *sghb)
+{
+    if (sgha == NULL || sghb == NULL)
+        return false;
+
+    if (sgha->init->sig_size != sghb->init->sig_size)
+        return false;
+
+    if (sgha->init->max_sig_id != sghb->init->max_sig_id)
+        return false;
+
+    if (SCMemcmp(sgha->init->sig_array, sghb->init->sig_array, sgha->init->sig_size) != 0)
+        return false;
+
+    return true;
 }
 
 void SigGroupHeadSetProtoAndDirection(SigGroupHead *sgh,
@@ -492,12 +554,13 @@ int SigGroupHeadBuildMatchArray(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
         return 0;
 
     BUG_ON(sgh->init->match_array != NULL);
+    sgh->init->max_sig_id = MAX(sgh->init->max_sig_id, max_idx);
 
     sgh->init->match_array = SCCalloc(sgh->init->sig_cnt, sizeof(Signature *));
     if (sgh->init->match_array == NULL)
         return -1;
 
-    for (sig = 0; sig < max_idx + 1; sig++) {
+    for (sig = 0; sig < sgh->init->max_sig_id + 1; sig++) {
         if (!(sgh->init->sig_array[(sig / 8)] & (1 << (sig % 8))) )
             continue;
 
@@ -549,11 +612,11 @@ void SigGroupHeadSetupFiles(const DetectEngineCtx *de_ctx, SigGroupHead *sgh)
         }
 #endif
         if (SignatureIsFilestoring(s)) {
+            // should be insured by caller that we do not overflow
+            DEBUG_VALIDATE_BUG_ON(sgh->filestore_cnt == UINT16_MAX);
             sgh->filestore_cnt++;
         }
     }
-
-    return;
 }
 
 /** \brief build an array of rule id's for sigs with no prefilter
@@ -981,9 +1044,10 @@ static int SigGroupHeadTest06(void)
 
     Packet *p = UTHBuildPacketSrcDst(NULL, 0, IPPROTO_ICMP, "192.168.1.1", "1.2.3.4");
     FAIL_IF_NULL(p);
+    FAIL_IF_NOT(PacketIsICMPv4(p));
 
-    p->icmpv4h->type = 5;
-    p->icmpv4h->code = 1;
+    p->l4.hdrs.icmpv4h->type = 5;
+    p->l4.hdrs.icmpv4h->code = 1;
 
     /* originally ip's were
     p.src.addr_data32[0] = 0xe08102d3;

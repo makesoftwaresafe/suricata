@@ -21,8 +21,8 @@
  * \author Pierre Chifflier <chifflier@wzdftpd.net>
  */
 
-#ifndef __APP_LAYER_REGISTER_H__
-#define __APP_LAYER_REGISTER_H__
+#ifndef SURICATA_APP_LAYER_REGISTER_H
+#define SURICATA_APP_LAYER_REGISTER_H
 
 #include "app-layer-detect-proto.h"
 
@@ -51,15 +51,15 @@ typedef struct AppLayerParser {
     const int complete_tc;
     int (*StateGetProgress)(void *alstate, uint8_t direction);
 
-    int (*StateGetEventInfo)(const char *event_name,
-                             int *event_id, AppLayerEventType *event_type);
-    int (*StateGetEventInfoById)(int event_id, const char **event_name,
-                                  AppLayerEventType *event_type);
+    int (*StateGetEventInfo)(
+            const char *event_name, uint8_t *event_id, AppLayerEventType *event_type);
+    int (*StateGetEventInfoById)(
+            uint8_t event_id, const char **event_name, AppLayerEventType *event_type);
 
     void *(*LocalStorageAlloc)(void);
     void (*LocalStorageFree)(void *);
 
-    AppLayerGetFileState (*GetTxFiles)(void *, void *, uint8_t);
+    AppLayerGetFileState (*GetTxFiles)(void *, uint8_t);
 
     AppLayerGetTxIterTuple (*GetTxIterator)(const uint8_t ipproto,
             const AppProto alproto, void *alstate, uint64_t min_tx_id,
@@ -70,8 +70,6 @@ typedef struct AppLayerParser {
     bool (*ApplyTxConfig)(void *state, void *tx, int mode, AppLayerTxConfig);
 
     uint32_t flags;
-
-    void (*Truncate)(void *state, uint8_t direction);
 
     AppLayerParserGetFrameIdByNameFn GetFrameIdByName;
     AppLayerParserGetFrameNameByIdFn GetFrameNameById;
@@ -100,4 +98,4 @@ int AppLayerRegisterParser(const struct AppLayerParser *p, AppProto alproto);
 
 int AppLayerRegisterParserAlias(const char *proto_name, const char *proto_alias);
 
-#endif /* __APP_LAYER_REGISTER_H__ */
+#endif /* SURICATA_APP_LAYER_REGISTER_H */

@@ -71,8 +71,6 @@ Mangle(char *string)
 
     while ((c = strchr(string, '_')))
         *c = '-';
-
-    return;
 }
 
 /**
@@ -185,7 +183,7 @@ static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int
 
     while (!done) {
         if (!yaml_parser_parse(parser, &event)) {
-            SCLogError("Failed to parse configuration file at line %" PRIuMAX ": %s\n",
+            SCLogError("Failed to parse configuration file at line %" PRIuMAX ": %s",
                     (uintmax_t)parser->problem_mark.line, parser->problem);
             retval = -1;
             break;
@@ -332,6 +330,9 @@ static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int
                             node = existing;
                         } else {
                             node = ConfNodeNew();
+                            if (unlikely(node == NULL)) {
+                                goto fail;
+                            }
                             node->name = SCStrdup(value);
                             node->parent = parent;
                             if (node->name && strchr(node->name, '_')) {
@@ -394,8 +395,19 @@ static int ConfYamlParse(yaml_parser_t *parser, ConfNode *parent, int inseq, int
             if (inseq) {
                 char sequence_node_name[DEFAULT_NAME_LEN];
                 snprintf(sequence_node_name, DEFAULT_NAME_LEN, "%d", seq_idx++);
-                ConfNode *seq_node = ConfNodeLookupChild(node,
-                    sequence_node_name);
+                ConfNode *seq_node = NULL;
+                if (was_empty < 0) {
+                    // initialize was_empty
+                    if (TAILQ_EMPTY(&node->head)) {
+                        was_empty = 1;
+                    } else {
+                        was_empty = 0;
+                    }
+                }
+                // we only check if the node's list was not empty at first
+                if (was_empty == 0) {
+                    seq_node = ConfNodeLookupChild(node, sequence_node_name);
+                }
                 if (seq_node != NULL) {
                     /* The sequence node has already been set, probably
                      * from the command line.  Remove it so it gets
@@ -546,11 +558,6 @@ ConfYamlLoadFileWithPrefix(const char *filename, const char *prefix)
     int ret;
     ConfNode *root = ConfGetNode(prefix);
 
-    if (yaml_parser_initialize(&parser) != 1) {
-        SCLogError("failed to initialize yaml parser.");
-        return -1;
-    }
-
     struct stat stat_buf;
     /* coverity[toctou] */
     if (stat(filename, &stat_buf) == 0) {
@@ -560,6 +567,11 @@ ConfYamlLoadFileWithPrefix(const char *filename, const char *prefix)
                     filename);
             return -1;
         }
+    }
+
+    if (yaml_parser_initialize(&parser) != 1) {
+        SCLogError("failed to initialize yaml parser.");
+        return -1;
     }
 
     /* coverity[toctou] */

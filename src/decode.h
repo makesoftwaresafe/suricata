@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2023 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DECODE_H__
-#define __DECODE_H__
+#ifndef SURICATA_DECODE_H
+#define SURICATA_DECODE_H
 
 //#define DBG_THREADS
 #define COUNTERS
@@ -32,14 +32,11 @@
 #include "threadvars.h"
 #include "util-debug.h"
 #include "decode-events.h"
+#include "util-exception-policy-types.h"
 #ifdef PROFILING
 #include "flow-worker.h"
 #include "app-layer-protos.h"
 #endif
-
-#ifdef HAVE_NAPATECH
-#include "util-napatech.h"
-#endif /* HAVE_NAPATECH */
 
 typedef enum {
     CHECKSUM_VALIDATION_DISABLE,
@@ -76,9 +73,6 @@ enum PktSrcEnum {
 #ifdef HAVE_DPDK
 #include "source-dpdk.h"
 #endif
-#ifdef HAVE_PF_RING_FLOW_OFFLOAD
-#include "source-pfring.h"
-#endif
 #ifdef HAVE_AF_XDP
 #include "source-af-xdp.h"
 #endif
@@ -86,7 +80,6 @@ enum PktSrcEnum {
 #include "decode-ethernet.h"
 #include "decode-gre.h"
 #include "decode-ppp.h"
-#include "decode-pppoe.h"
 #include "decode-ipv4.h"
 #include "decode-ipv6.h"
 #include "decode-icmpv4.h"
@@ -97,7 +90,9 @@ enum PktSrcEnum {
 #include "decode-esp.h"
 #include "decode-vlan.h"
 #include "decode-mpls.h"
+#include "decode-arp.h"
 
+#include "util-validate.h"
 
 /* forward declarations */
 struct DetectionEngineThreadCtx_;
@@ -108,8 +103,6 @@ struct PktPool_;
 /* declare these here as they are called from the
  * PACKET_RECYCLE and PACKET_CLEANUP macro's. */
 typedef struct AppLayerDecoderEvents_ AppLayerDecoderEvents;
-void AppLayerDecoderEventsResetEvents(AppLayerDecoderEvents *events);
-void AppLayerDecoderEventsFreeEvents(AppLayerDecoderEvents **events);
 
 /* Address */
 typedef struct Address_ {
@@ -140,38 +133,41 @@ typedef struct Address_ {
  *
  * We set the rest of the struct to 0 so we can
  * prevent using memset. */
-#define SET_IPV4_SRC_ADDR(p, a) do {                              \
-        (a)->family = AF_INET;                                    \
-        (a)->addr_data32[0] = (uint32_t)(p)->ip4h->s_ip_src.s_addr; \
-        (a)->addr_data32[1] = 0;                                  \
-        (a)->addr_data32[2] = 0;                                  \
-        (a)->addr_data32[3] = 0;                                  \
+#define SET_IPV4_SRC_ADDR(ip4h, a)                                                                 \
+    do {                                                                                           \
+        (a)->family = AF_INET;                                                                     \
+        (a)->addr_data32[0] = (uint32_t)(ip4h)->s_ip_src.s_addr;                                   \
+        (a)->addr_data32[1] = 0;                                                                   \
+        (a)->addr_data32[2] = 0;                                                                   \
+        (a)->addr_data32[3] = 0;                                                                   \
     } while (0)
 
-#define SET_IPV4_DST_ADDR(p, a) do {                              \
-        (a)->family = AF_INET;                                    \
-        (a)->addr_data32[0] = (uint32_t)(p)->ip4h->s_ip_dst.s_addr; \
-        (a)->addr_data32[1] = 0;                                  \
-        (a)->addr_data32[2] = 0;                                  \
-        (a)->addr_data32[3] = 0;                                  \
+#define SET_IPV4_DST_ADDR(ip4h, a)                                                                 \
+    do {                                                                                           \
+        (a)->family = AF_INET;                                                                     \
+        (a)->addr_data32[0] = (uint32_t)(ip4h)->s_ip_dst.s_addr;                                   \
+        (a)->addr_data32[1] = 0;                                                                   \
+        (a)->addr_data32[2] = 0;                                                                   \
+        (a)->addr_data32[3] = 0;                                                                   \
     } while (0)
 
-/* Set the IPv6 addresses into the Addrs of the Packet.
- * Make sure p->ip6h is initialized and validated. */
-#define SET_IPV6_SRC_ADDR(p, a) do {                    \
-        (a)->family = AF_INET6;                         \
-        (a)->addr_data32[0] = (p)->ip6h->s_ip6_src[0];  \
-        (a)->addr_data32[1] = (p)->ip6h->s_ip6_src[1];  \
-        (a)->addr_data32[2] = (p)->ip6h->s_ip6_src[2];  \
-        (a)->addr_data32[3] = (p)->ip6h->s_ip6_src[3];  \
+/* Set the IPv6 addresses into the Addrs of the Packet. */
+#define SET_IPV6_SRC_ADDR(ip6h, a)                                                                 \
+    do {                                                                                           \
+        (a)->family = AF_INET6;                                                                    \
+        (a)->addr_data32[0] = (ip6h)->s_ip6_src[0];                                                \
+        (a)->addr_data32[1] = (ip6h)->s_ip6_src[1];                                                \
+        (a)->addr_data32[2] = (ip6h)->s_ip6_src[2];                                                \
+        (a)->addr_data32[3] = (ip6h)->s_ip6_src[3];                                                \
     } while (0)
 
-#define SET_IPV6_DST_ADDR(p, a) do {                    \
-        (a)->family = AF_INET6;                         \
-        (a)->addr_data32[0] = (p)->ip6h->s_ip6_dst[0];  \
-        (a)->addr_data32[1] = (p)->ip6h->s_ip6_dst[1];  \
-        (a)->addr_data32[2] = (p)->ip6h->s_ip6_dst[2];  \
-        (a)->addr_data32[3] = (p)->ip6h->s_ip6_dst[3];  \
+#define SET_IPV6_DST_ADDR(ip6h, a)                                                                 \
+    do {                                                                                           \
+        (a)->family = AF_INET6;                                                                    \
+        (a)->addr_data32[0] = (ip6h)->s_ip6_dst[0];                                                \
+        (a)->addr_data32[1] = (ip6h)->s_ip6_dst[1];                                                \
+        (a)->addr_data32[2] = (ip6h)->s_ip6_dst[2];                                                \
+        (a)->addr_data32[3] = (ip6h)->s_ip6_dst[3];                                                \
     } while (0)
 
 /* Set the TCP ports into the Ports of the Packet.
@@ -192,17 +188,6 @@ typedef struct Address_ {
 #define SET_UDP_DST_PORT(pkt, prt) do {            \
         SET_PORT(UDP_GET_DST_PORT((pkt)), *(prt)); \
     } while (0)
-
-/* Set the SCTP ports into the Ports of the Packet.
- * Make sure p->sctph is initialized and validated. */
-#define SET_SCTP_SRC_PORT(pkt, prt) do {            \
-        SET_PORT(SCTP_GET_SRC_PORT((pkt)), *(prt)); \
-    } while (0)
-
-#define SET_SCTP_DST_PORT(pkt, prt) do {            \
-        SET_PORT(SCTP_GET_DST_PORT((pkt)), *(prt)); \
-    } while (0)
-
 
 #define GET_IPV4_SRC_ADDR_U32(p) ((p)->src.addr_data32[0])
 #define GET_IPV4_DST_ADDR_U32(p) ((p)->dst.addr_data32[0])
@@ -242,21 +227,12 @@ typedef uint16_t Port;
  *We determine the ip version. */
 #define IP_GET_RAW_VER(pkt) ((((pkt)[0] & 0xf0) >> 4))
 
-#define PKT_IS_IPV4(p)      (((p)->ip4h != NULL))
-#define PKT_IS_IPV6(p)      (((p)->ip6h != NULL))
 #define PKT_IS_TCP(p)       (((p)->tcph != NULL))
 #define PKT_IS_UDP(p)       (((p)->udph != NULL))
 #define PKT_IS_ICMPV4(p)    (((p)->icmpv4h != NULL))
 #define PKT_IS_ICMPV6(p)    (((p)->icmpv6h != NULL))
 #define PKT_IS_TOSERVER(p)  (((p)->flowflags & FLOW_PKT_TOSERVER))
 #define PKT_IS_TOCLIENT(p)  (((p)->flowflags & FLOW_PKT_TOCLIENT))
-
-#define IPH_IS_VALID(p) (PKT_IS_IPV4((p)) || PKT_IS_IPV6((p)))
-
-/* Retrieve proto regardless of IP version */
-#define IP_GET_IPPROTO(p) \
-    (p->proto ? p->proto : \
-    (PKT_IS_IPV4((p))? IPV4_GET_IPPROTO((p)) : (PKT_IS_IPV6((p))? IPV6_GET_L4PROTO((p)) : 0)))
 
 /* structure to store the sids/gids/etc the detection engine
  * found in this packet */
@@ -281,6 +257,8 @@ typedef struct PacketAlert_ {
 #define PACKET_ALERT_RATE_FILTER_MODIFIED   0x10
 /** alert is in a frame, frame_id set */
 #define PACKET_ALERT_FLAG_FRAME 0x20
+/** alert in a tx was forced */
+#define PACKET_ALERT_FLAG_TX_GUESSED 0x040
 
 extern uint16_t packet_alert_max;
 #define PACKET_ALERT_MAX 15
@@ -363,15 +341,6 @@ typedef struct PktProfilingLoggerData_ {
     uint64_t ticks_spent;
 } PktProfilingLoggerData;
 
-typedef struct PktProfilingPrefilterEngine_ {
-    uint64_t ticks_spent;
-} PktProfilingPrefilterEngine;
-
-typedef struct PktProfilingPrefilterData_ {
-    PktProfilingPrefilterEngine *engines;
-    uint32_t size;          /**< array size */
-} PktProfilingPrefilterData;
-
 /** \brief Per pkt stats storage */
 typedef struct PktProfiling_ {
     uint64_t ticks_start;
@@ -379,10 +348,10 @@ typedef struct PktProfiling_ {
 
     PktProfilingTmmData tmm[TMM_SIZE];
     PktProfilingData flowworker[PROFILE_FLOWWORKER_SIZE];
-    PktProfilingAppData app[ALPROTO_MAX];
     PktProfilingDetectData detect[PROF_DETECT_SIZE];
     PktProfilingLoggerData logger[LOGGER_SIZE];
     uint64_t proto_detect;
+    PktProfilingAppData app[];
 } PktProfiling;
 
 #endif /* PROFILING */
@@ -402,13 +371,90 @@ enum PacketDropReason {
     PKT_DROP_REASON_STREAM_MEMCAP,
     PKT_DROP_REASON_STREAM_MIDSTREAM,
     PKT_DROP_REASON_STREAM_REASSEMBLY,
+    PKT_DROP_REASON_STREAM_URG,
     PKT_DROP_REASON_NFQ_ERROR,    /**< no nfq verdict, must be error */
     PKT_DROP_REASON_INNER_PACKET, /**< drop issued by inner (tunnel) packet */
     PKT_DROP_REASON_MAX,
 };
 
+enum PacketTunnelType {
+    PacketTunnelNone,
+    PacketTunnelRoot,
+    PacketTunnelChild,
+};
+
 /* forward declaration since Packet struct definition requires this */
 struct PacketQueue_;
+
+enum PacketL2Types {
+    PACKET_L2_UNKNOWN = 0,
+    PACKET_L2_ETHERNET,
+};
+
+struct PacketL2 {
+    enum PacketL2Types type;
+    union L2Hdrs {
+        EthernetHdr *ethh;
+    } hdrs;
+};
+
+enum PacketL3Types {
+    PACKET_L3_UNKNOWN = 0,
+    PACKET_L3_IPV4,
+    PACKET_L3_IPV6,
+    PACKET_L3_ARP,
+};
+
+struct PacketL3 {
+    enum PacketL3Types type;
+    /* Checksum for IP packets. */
+    bool csum_set;
+    uint16_t csum;
+    union Hdrs {
+        IPV4Hdr *ip4h;
+        IPV6Hdr *ip6h;
+        ARPHdr *arph;
+    } hdrs;
+    /* IPv4 and IPv6 are mutually exclusive */
+    union {
+        IPV4Vars ip4;
+        struct {
+            IPV6Vars v;
+            IPV6ExtHdrs eh;
+        } ip6;
+    } vars;
+};
+
+enum PacketL4Types {
+    PACKET_L4_UNKNOWN = 0,
+    PACKET_L4_TCP,
+    PACKET_L4_UDP,
+    PACKET_L4_ICMPV4,
+    PACKET_L4_ICMPV6,
+    PACKET_L4_SCTP,
+    PACKET_L4_GRE,
+    PACKET_L4_ESP,
+};
+
+struct PacketL4 {
+    enum PacketL4Types type;
+    bool csum_set;
+    uint16_t csum;
+    union L4Hdrs {
+        TCPHdr *tcph;
+        UDPHdr *udph;
+        ICMPV4Hdr *icmpv4h;
+        ICMPV6Hdr *icmpv6h;
+        SCTPHdr *sctph;
+        GREHdr *greh;
+        ESPHdr *esph;
+    } hdrs;
+    union L4Vars {
+        TCPVars tcp;
+        ICMPV4Vars icmpv4;
+        ICMPV6Vars icmpv6;
+    } vars;
+};
 
 /* sizes of the members:
  * src: 17 bytes
@@ -472,6 +518,9 @@ typedef struct Packet_
      * hash size still */
     uint32_t flow_hash;
 
+    /* tunnel type: none, root or child */
+    enum PacketTunnelType ttype;
+
     SCTime_t ts;
 
     union {
@@ -491,19 +540,11 @@ typedef struct Packet_
 #ifdef HAVE_NETMAP
         NetmapPacketVars netmap_v;
 #endif
-#ifdef HAVE_PFRING
-#ifdef HAVE_PF_RING_FLOW_OFFLOAD
-        PfringPacketVars pfring_v;
-#endif
-#endif
 #ifdef WINDIVERT
         WinDivertPacketVars windivert_v;
 #endif /* WINDIVERT */
 #ifdef HAVE_DPDK
         DPDKPacketVars dpdk_v;
-#endif
-#ifdef HAVE_NAPATECH
-        NapatechPacketVars ntpv;
 #endif
 #ifdef HAVE_AF_XDP
         AFXDPPacketVars afxdp_v;
@@ -524,53 +565,9 @@ typedef struct Packet_
     /* pkt vars */
     PktVar *pktvar;
 
-    /* header pointers */
-    EthernetHdr *ethh;
-
-    /* Checksum for IP packets. */
-    int32_t level3_comp_csum;
-    /* Check sum for TCP, UDP or ICMP packets */
-    int32_t level4_comp_csum;
-
-    IPV4Hdr *ip4h;
-
-    IPV6Hdr *ip6h;
-
-    /* IPv4 and IPv6 are mutually exclusive */
-    union {
-        IPV4Vars ip4vars;
-        struct {
-            IPV6Vars ip6vars;
-            IPV6ExtHdrs ip6eh;
-        };
-    };
-    /* Can only be one of TCP, UDP, ICMP at any given time */
-    union {
-        TCPVars tcpvars;
-        ICMPV4Vars icmpv4vars;
-        ICMPV6Vars icmpv6vars;
-    } l4vars;
-#define tcpvars     l4vars.tcpvars
-#define icmpv4vars  l4vars.icmpv4vars
-#define icmpv6vars  l4vars.icmpv6vars
-
-    TCPHdr *tcph;
-
-    UDPHdr *udph;
-
-    SCTPHdr *sctph;
-
-    ESPHdr *esph;
-
-    ICMPV4Hdr *icmpv4h;
-
-    ICMPV6Hdr *icmpv6h;
-
-    PPPHdr *ppph;
-    PPPOESessionHdr *pppoesh;
-    PPPOEDiscoveryHdr *pppoedh;
-
-    GREHdr *greh;
+    struct PacketL2 l2;
+    struct PacketL3 l3;
+    struct PacketL4 l4;
 
     /* ptr to the payload of the packet
      * with it's length. */
@@ -618,6 +615,9 @@ typedef struct Packet_
     /* enum PacketDropReason::PKT_DROP_REASON_* as uint8_t for compactness */
     uint8_t drop_reason;
 
+    /** has verdict on this tunneled packet been issued? */
+    bool tunnel_verdicted;
+
     /* tunnel/encapsulation handling */
     struct Packet_ *root; /* in case of tunnel this is a ptr
                            * to the 'real' packet, the one we
@@ -646,8 +646,8 @@ typedef struct Packet_
         /** lock to protect access to:
          *  - tunnel_rtv_cnt
          *  - tunnel_tpr_cnt
-         *  - nfq_v.mark
-         *  - flags
+         *  - tunnel_verdicted
+         *  - nfq_v.mark (if p->ttype != PacketTunnelNone)
          */
         SCSpinlock tunnel_lock;
     } persistent;
@@ -658,6 +658,9 @@ typedef struct Packet_
     uint8_t pkt_data[];
 } Packet;
 
+static inline bool PacketIsIPv4(const Packet *p);
+static inline bool PacketIsIPv6(const Packet *p);
+
 /** highest mtu of the interfaces we monitor */
 #define DEFAULT_MTU 1500
 #define MINIMUM_MTU 68      /**< ipv4 minimum: rfc791 */
@@ -667,6 +670,262 @@ typedef struct Packet_
 #define MAX_PAYLOAD_SIZE (IPV6_HEADER_LEN + 65536 + 28)
 extern uint32_t default_packet_size;
 #define SIZE_OF_PACKET (default_packet_size + sizeof(Packet))
+
+static inline bool PacketIsIPv4(const Packet *p)
+{
+    return p->l3.type == PACKET_L3_IPV4;
+}
+
+static inline const IPV4Hdr *PacketGetIPv4(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(!PacketIsIPv4(p));
+    return p->l3.hdrs.ip4h;
+}
+
+static inline IPV4Hdr *PacketSetIPV4(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l3.type != PACKET_L3_UNKNOWN);
+    p->l3.type = PACKET_L3_IPV4;
+    p->l3.hdrs.ip4h = (IPV4Hdr *)buf;
+    return p->l3.hdrs.ip4h;
+}
+
+/* Retrieve proto regardless of IP version */
+static inline uint8_t PacketGetIPProto(const Packet *p)
+{
+    if (p->proto != 0) {
+        return p->proto;
+    }
+    if (PacketIsIPv4(p)) {
+        const IPV4Hdr *hdr = PacketGetIPv4(p);
+        return IPV4_GET_RAW_IPPROTO(hdr);
+    } else if (PacketIsIPv6(p)) {
+        return IPV6_GET_L4PROTO(p);
+    }
+    return 0;
+}
+
+static inline uint8_t PacketGetIPv4IPProto(const Packet *p)
+{
+    if (PacketGetIPv4(p)) {
+        const IPV4Hdr *hdr = PacketGetIPv4(p);
+        return IPV4_GET_RAW_IPPROTO(hdr);
+    }
+    return 0;
+}
+
+static inline const IPV6Hdr *PacketGetIPv6(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(!PacketIsIPv6(p));
+    return p->l3.hdrs.ip6h;
+}
+
+static inline IPV6Hdr *PacketSetIPV6(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l3.type != PACKET_L3_UNKNOWN);
+    p->l3.type = PACKET_L3_IPV6;
+    p->l3.hdrs.ip6h = (IPV6Hdr *)buf;
+    return p->l3.hdrs.ip6h;
+}
+
+static inline bool PacketIsIPv6(const Packet *p)
+{
+    return p->l3.type == PACKET_L3_IPV6;
+}
+
+static inline void PacketClearL2(Packet *p)
+{
+    memset(&p->l2, 0, sizeof(p->l2));
+}
+
+/* Can be called multiple times, e.g. for DCE */
+static inline EthernetHdr *PacketSetEthernet(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l2.type != PACKET_L2_UNKNOWN && p->l2.type != PACKET_L2_ETHERNET);
+    p->l2.type = PACKET_L2_ETHERNET;
+    p->l2.hdrs.ethh = (EthernetHdr *)buf;
+    return p->l2.hdrs.ethh;
+}
+
+static inline const EthernetHdr *PacketGetEthernet(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l2.type != PACKET_L2_ETHERNET);
+    return p->l2.hdrs.ethh;
+}
+
+static inline bool PacketIsEthernet(const Packet *p)
+{
+    return p->l2.type == PACKET_L2_ETHERNET;
+}
+
+static inline void PacketClearL3(Packet *p)
+{
+    memset(&p->l3, 0, sizeof(p->l3));
+}
+
+static inline void PacketClearL4(Packet *p)
+{
+    memset(&p->l4, 0, sizeof(p->l4));
+}
+
+static inline TCPHdr *PacketSetTCP(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_TCP;
+    p->l4.hdrs.tcph = (TCPHdr *)buf;
+    return p->l4.hdrs.tcph;
+}
+
+static inline const TCPHdr *PacketGetTCP(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_TCP);
+    return p->l4.hdrs.tcph;
+}
+
+static inline bool PacketIsTCP(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_TCP;
+}
+
+static inline UDPHdr *PacketSetUDP(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_UDP;
+    p->l4.hdrs.udph = (UDPHdr *)buf;
+    return p->l4.hdrs.udph;
+}
+
+static inline const UDPHdr *PacketGetUDP(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UDP);
+    return p->l4.hdrs.udph;
+}
+
+static inline bool PacketIsUDP(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_UDP;
+}
+
+static inline ICMPV4Hdr *PacketSetICMPv4(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_ICMPV4;
+    p->l4.hdrs.icmpv4h = (ICMPV4Hdr *)buf;
+    return p->l4.hdrs.icmpv4h;
+}
+
+static inline const ICMPV4Hdr *PacketGetICMPv4(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_ICMPV4);
+    return p->l4.hdrs.icmpv4h;
+}
+
+static inline bool PacketIsICMPv4(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_ICMPV4;
+}
+
+static inline const IPV4Hdr *PacketGetICMPv4EmbIPv4(const Packet *p)
+{
+    const uint8_t *start = (const uint8_t *)PacketGetICMPv4(p);
+    const uint8_t *ip = start + p->l4.vars.icmpv4.emb_ip4h_offset;
+    return (const IPV4Hdr *)ip;
+}
+
+static inline ICMPV6Hdr *PacketSetICMPv6(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_ICMPV6;
+    p->l4.hdrs.icmpv6h = (ICMPV6Hdr *)buf;
+    return p->l4.hdrs.icmpv6h;
+}
+
+static inline const ICMPV6Hdr *PacketGetICMPv6(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_ICMPV6);
+    return p->l4.hdrs.icmpv6h;
+}
+
+static inline bool PacketIsICMPv6(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_ICMPV6;
+}
+
+static inline SCTPHdr *PacketSetSCTP(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_SCTP;
+    p->l4.hdrs.sctph = (SCTPHdr *)buf;
+    return p->l4.hdrs.sctph;
+}
+
+static inline const SCTPHdr *PacketGetSCTP(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_SCTP);
+    return p->l4.hdrs.sctph;
+}
+
+static inline bool PacketIsSCTP(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_SCTP;
+}
+
+static inline GREHdr *PacketSetGRE(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_GRE;
+    p->l4.hdrs.greh = (GREHdr *)buf;
+    return p->l4.hdrs.greh;
+}
+
+static inline const GREHdr *PacketGetGRE(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_GRE);
+    return p->l4.hdrs.greh;
+}
+
+static inline bool PacketIsGRE(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_GRE;
+}
+
+static inline ESPHdr *PacketSetESP(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_UNKNOWN);
+    p->l4.type = PACKET_L4_ESP;
+    p->l4.hdrs.esph = (ESPHdr *)buf;
+    return p->l4.hdrs.esph;
+}
+
+static inline const ESPHdr *PacketGetESP(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l4.type != PACKET_L4_ESP);
+    return p->l4.hdrs.esph;
+}
+
+static inline bool PacketIsESP(const Packet *p)
+{
+    return p->l4.type == PACKET_L4_ESP;
+}
+
+static inline const ARPHdr *PacketGetARP(const Packet *p)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l3.type != PACKET_L3_ARP);
+    return p->l3.hdrs.arph;
+}
+
+static inline ARPHdr *PacketSetARP(Packet *p, const uint8_t *buf)
+{
+    DEBUG_VALIDATE_BUG_ON(p->l3.type != PACKET_L3_UNKNOWN);
+    p->l3.type = PACKET_L3_ARP;
+    p->l3.hdrs.arph = (ARPHdr *)buf;
+    return p->l3.hdrs.arph;
+}
+
+static inline bool PacketIsARP(const Packet *p)
+{
+    return p->l3.type == PACKET_L3_ARP;
+}
 
 /** \brief Structure to hold thread specific data for all decode modules */
 typedef struct DecodeThreadVars_
@@ -692,6 +951,7 @@ typedef struct DecodeThreadVars_
     uint16_t counter_tcp_syn;
     uint16_t counter_tcp_synack;
     uint16_t counter_tcp_rst;
+    uint16_t counter_tcp_urg;
     uint16_t counter_udp;
     uint16_t counter_icmpv4;
     uint16_t counter_icmpv6;
@@ -726,8 +986,14 @@ typedef struct DecodeThreadVars_
     uint16_t counter_defrag_ipv6_fragments;
     uint16_t counter_defrag_ipv6_reassembled;
     uint16_t counter_defrag_max_hit;
+    uint16_t counter_defrag_no_frags;
+    uint16_t counter_defrag_tracker_soft_reuse;
+    uint16_t counter_defrag_tracker_hard_reuse;
+    uint16_t counter_defrag_tracker_timeout;
+    ExceptionPolicyCounters counter_defrag_memcap_eps;
 
     uint16_t counter_flow_memcap;
+    ExceptionPolicyCounters counter_flow_memcap_eps;
 
     uint16_t counter_tcp_active_sessions;
     uint16_t counter_flow_total;
@@ -763,14 +1029,6 @@ void CaptureStatsSetup(ThreadVars *tv);
         memset(&(p)->l4vars, 0x00, sizeof((p)->l4vars));    \
     } while (0)
 
-/**
- *  \brief reset these to -1(indicates that the packet is fresh from the queue)
- */
-#define PACKET_RESET_CHECKSUMS(p) do { \
-        (p)->level3_comp_csum = -1;   \
-        (p)->level4_comp_csum = -1;   \
-    } while (0)
-
 /* if p uses extended data, free them */
 #define PACKET_FREE_EXTDATA(p) do {                 \
         if ((p)->ext_pkt) {                         \
@@ -796,13 +1054,14 @@ static inline void TUNNEL_INCR_PKT_TPR(Packet *p)
 #define TUNNEL_PKT_RTV(p) ((p)->root ? (p)->root->tunnel_rtv_cnt : (p)->tunnel_rtv_cnt)
 #define TUNNEL_PKT_TPR(p) ((p)->root ? (p)->root->tunnel_tpr_cnt : (p)->tunnel_tpr_cnt)
 
-#define IS_TUNNEL_PKT(p)            (((p)->flags & PKT_TUNNEL))
-#define SET_TUNNEL_PKT(p)           ((p)->flags |= PKT_TUNNEL)
-#define UNSET_TUNNEL_PKT(p)         ((p)->flags &= ~PKT_TUNNEL)
-#define IS_TUNNEL_ROOT_PKT(p)       (IS_TUNNEL_PKT(p) && (p)->root == NULL)
-
-#define IS_TUNNEL_PKT_VERDICTED(p)  (((p)->flags & PKT_TUNNEL_VERDICTED))
-#define SET_TUNNEL_PKT_VERDICTED(p) ((p)->flags |= PKT_TUNNEL_VERDICTED)
+static inline bool PacketTunnelIsVerdicted(const Packet *p)
+{
+    return p->tunnel_verdicted;
+}
+static inline void PacketTunnelSetVerdicted(Packet *p)
+{
+    p->tunnel_verdicted = true;
+}
 
 enum DecodeTunnelProto {
     DECODE_TUNNEL_ETHERNET,
@@ -814,6 +1073,7 @@ enum DecodeTunnelProto {
     DECODE_TUNNEL_IPV6_TEREDO, /**< separate protocol for stricter error handling */
     DECODE_TUNNEL_PPP,
     DECODE_TUNNEL_NSH,
+    DECODE_TUNNEL_ARP,
     DECODE_TUNNEL_UNSET
 };
 
@@ -871,6 +1131,7 @@ int DecodeERSPANTypeI(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t 
 int DecodeCHDLC(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 int DecodeTEMPLATE(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 int DecodeNSH(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
+int DecodeARP(ThreadVars *, DecodeThreadVars *, Packet *, const uint8_t *, uint32_t);
 
 #ifdef UNITTESTS
 void DecodeIPV6FragHeader(Packet *p, const uint8_t *pkt,
@@ -898,8 +1159,6 @@ void DecodeUnregisterCounters(void);
     p->flags |= PKT_IS_INVALID; \
     ENGINE_SET_EVENT(p, e); \
 } while(0)
-
-
 
 #define ENGINE_ISSET_EVENT(p, e) ({ \
     int r = 0; \
@@ -979,6 +1238,7 @@ void DecodeUnregisterCounters(void);
  * Libpcap on at least OpenBSD returns 101 as datalink type for RAW pcaps though. */
 #define LINKTYPE_RAW2        101
 #define LINKTYPE_IPV4        228
+#define LINKTYPE_IPV6        229
 #define LINKTYPE_GRE_OVER_IP 778
 #define LINKTYPE_CISCO_HDLC  DLT_C_HDLC
 #define PPP_OVER_GRE         11
@@ -988,7 +1248,8 @@ void DecodeUnregisterCounters(void);
 
 /** Flag to indicate that packet header or contents should not be inspected */
 #define PKT_NOPACKET_INSPECTION BIT_U32(0)
-// vacancy
+/** Packet has a PPP_VJ_UCOMP header */
+#define PKT_PPP_VJ_UCOMP BIT_U32(1)
 
 /** Flag to indicate that packet contents should not be inspected */
 #define PKT_NOPAYLOAD_INSPECTION BIT_U32(2)
@@ -1008,14 +1269,14 @@ void DecodeUnregisterCounters(void);
 /** Packet is modified by the stream engine, we need to recalc the csum and       \
                    reinject/replace */
 #define PKT_STREAM_MODIFIED BIT_U32(10)
-/** Packet mark is modified */
-#define PKT_MARK_MODIFIED BIT_U32(11)
+
+// vacancy
+
 /** Exclude packet from pcap logging as it's part of a stream that has reassembly \
                    depth reached. */
 #define PKT_STREAM_NOPCAPLOG BIT_U32(12)
 
-#define PKT_TUNNEL           BIT_U32(13)
-#define PKT_TUNNEL_VERDICTED BIT_U32(14)
+// vacancy 2x
 
 /** Packet checksum is not computed (TX packet for example) */
 #define PKT_IGNORE_CHECKSUM BIT_U32(15)
@@ -1091,6 +1352,46 @@ static inline void DecodeSetNoPacketInspectionFlag(Packet *p)
     p->flags |= PKT_NOPACKET_INSPECTION;
 }
 
+static inline bool PacketIsTunnelRoot(const Packet *p)
+{
+    return (p->ttype == PacketTunnelRoot);
+}
+
+static inline bool PacketIsTunnelChild(const Packet *p)
+{
+    return (p->ttype == PacketTunnelChild);
+}
+
+static inline bool PacketIsTunnel(const Packet *p)
+{
+    return (p->ttype != PacketTunnelNone);
+}
+
+static inline bool PacketIsNotTunnel(const Packet *p)
+{
+    return (p->ttype == PacketTunnelNone);
+}
+
+static inline bool VerdictTunnelPacketInternal(const Packet *p)
+{
+    const uint16_t outstanding = TUNNEL_PKT_TPR(p) - TUNNEL_PKT_RTV(p);
+    SCLogDebug("tunnel: outstanding %u", outstanding);
+
+    /* if there are packets outstanding, we won't verdict this one */
+    if (PacketIsTunnelRoot(p) && !PacketTunnelIsVerdicted(p) && !outstanding) {
+        SCLogDebug("root %p: verdict", p);
+        return true;
+
+    } else if (PacketIsTunnelChild(p) && outstanding == 1 && p->root &&
+               PacketTunnelIsVerdicted(p->root)) {
+        SCLogDebug("tunnel %p: verdict", p);
+        return true;
+
+    } else {
+        return false;
+    }
+}
+
 /** \brief return true if *this* packet needs to trigger a verdict.
  *
  *  If we have the root packet, and we have none outstanding,
@@ -1103,22 +1404,10 @@ static inline void DecodeSetNoPacketInspectionFlag(Packet *p)
  */
 static inline bool VerdictTunnelPacket(Packet *p)
 {
-    bool verdict = true;
+    bool verdict;
     SCSpinlock *lock = p->root ? &p->root->persistent.tunnel_lock : &p->persistent.tunnel_lock;
     SCSpinLock(lock);
-    const uint16_t outstanding = TUNNEL_PKT_TPR(p) - TUNNEL_PKT_RTV(p);
-    SCLogDebug("tunnel: outstanding %u", outstanding);
-
-    /* if there are packets outstanding, we won't verdict this one */
-    if (IS_TUNNEL_ROOT_PKT(p) && !IS_TUNNEL_PKT_VERDICTED(p) && !outstanding) {
-        // verdict
-        SCLogDebug("root %p: verdict", p);
-    } else if (!IS_TUNNEL_ROOT_PKT(p) && outstanding == 1 && p->root && IS_TUNNEL_PKT_VERDICTED(p->root)) {
-        // verdict
-        SCLogDebug("tunnel %p: verdict", p);
-    } else {
-        verdict = false;
-    }
+    verdict = VerdictTunnelPacketInternal(p);
     SCSpinUnlock(lock);
     return verdict;
 }
@@ -1190,7 +1479,7 @@ static inline bool DecodeNetworkLayer(ThreadVars *tv, DecodeThreadVars *dtv,
             DecodeIEEE8021ah(tv, dtv, p, data, len);
             break;
         case ETHERNET_TYPE_ARP:
-            StatsIncr(tv, dtv->counter_arp);
+            DecodeARP(tv, dtv, p, data, len);
             break;
         case ETHERNET_TYPE_MPLS_UNICAST:
         case ETHERNET_TYPE_MPLS_MULTICAST:
@@ -1213,9 +1502,10 @@ static inline bool DecodeNetworkLayer(ThreadVars *tv, DecodeThreadVars *dtv,
         default:
             SCLogDebug("unknown ether type: %" PRIx16 "", proto);
             StatsIncr(tv, dtv->counter_ethertype_unknown);
+            ENGINE_SET_EVENT(p, ETHERNET_UNKNOWN_ETHERTYPE);
             return false;
     }
     return true;
 }
 
-#endif /* __DECODE_H__ */
+#endif /* SURICATA_DECODE_H */

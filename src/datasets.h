@@ -15,10 +15,11 @@
  * 02110-1301, USA.
  */
 
-#ifndef __DATASETS_H__
-#define __DATASETS_H__
+#ifndef SURICATA_DATASETS_H
+#define SURICATA_DATASETS_H
 
 #include "util-thash.h"
+#include "rust.h"
 #include "datasets-reputation.h"
 
 int DatasetsInit(void);
@@ -56,6 +57,7 @@ Dataset *DatasetFind(const char *name, enum DatasetTypes type);
 Dataset *DatasetGet(const char *name, enum DatasetTypes type, const char *save, const char *load,
         uint64_t memcap, uint32_t hashsize);
 int DatasetAdd(Dataset *set, const uint8_t *data, const uint32_t data_len);
+int DatasetRemove(Dataset *set, const uint8_t *data, const uint32_t data_len);
 int DatasetLookup(Dataset *set, const uint8_t *data, const uint32_t data_len);
 DataRepResultType DatasetLookupwRep(Dataset *set, const uint8_t *data, const uint32_t data_len,
         const DataRepType *rep);
@@ -64,4 +66,4 @@ int DatasetAddSerialized(Dataset *set, const char *string);
 int DatasetRemoveSerialized(Dataset *set, const char *string);
 int DatasetLookupSerialized(Dataset *set, const char *string);
 
-#endif /* __DATASETS_H__ */
+#endif /* SURICATA_DATASETS_H */

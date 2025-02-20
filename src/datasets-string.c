@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2019 Open Information Security Foundation
+/* Copyright (C) 2017-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -27,7 +27,7 @@
 #include "datasets-string.h"
 #include "util-thash.h"
 #include "util-print.h"
-#include "util-base64.h"    // decode base64
+#include "util-hash-lookup3.h"
 #include "rust.h"
 
 #if 0
@@ -47,15 +47,14 @@ int StringAsBase64(const void *s, char *out, size_t out_size)
 {
     const StringType *str = s;
 
-    unsigned long len = Base64EncodeBufferSize(str->len);
+    unsigned long len = SCBase64EncodeBufferSize(str->len);
     uint8_t encoded_data[len];
-    if (Base64Encode((unsigned char *)str->ptr, str->len,
-        encoded_data, &len) != SC_BASE64_OK)
+    if (SCBase64Encode((unsigned char *)str->ptr, str->len, encoded_data, &len) != SC_BASE64_OK)
         return 0;
 
     strlcpy(out, (const char *)encoded_data, out_size);
     strlcat(out, "\n", out_size);
-    return strlen(out);
+    return (int)strlen(out);
 }
 
 int StringSet(void *dst, void *src)
@@ -85,17 +84,16 @@ bool StringCompare(void *a, void *b)
     return (memcmp(as->ptr, bs->ptr, as->len) == 0);
 }
 
-uint32_t StringHash(void *s)
+uint32_t StringHash(uint32_t hash_seed, void *s)
 {
-    uint32_t hash = 5381;
     StringType *str = s;
+    return hashlittle_safe(str->ptr, str->len, hash_seed);
+}
 
-    for (uint32_t i = 0; i < str->len; i++) {
-        int c = str->ptr[i];
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
-    }
-
-    return hash;
+uint32_t StringGetLength(void *s)
+{
+    StringType *str = s;
+    return str->len;
 }
 
 // base data stays in hash

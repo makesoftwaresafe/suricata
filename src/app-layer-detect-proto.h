@@ -22,8 +22,8 @@
  * \author Anoop Saldanha <anoopsaldanha@gmail.com>
  */
 
-#ifndef __APP_LAYER_DETECT_PROTO__H__
-#define __APP_LAYER_DETECT_PROTO__H__
+#ifndef SURICATA_APP_LAYER_DETECT_PROTO__H
+#define SURICATA_APP_LAYER_DETECT_PROTO__H
 
 #include "flow.h"
 #include "app-layer-protos.h"
@@ -120,6 +120,8 @@ void AppLayerProtoDetectReset(Flow *);
 
 bool AppLayerRequestProtocolChange(Flow *f, uint16_t dp, AppProto expect_proto);
 bool AppLayerRequestProtocolTLSUpgrade(Flow *f);
+
+void AppLayerForceProtocolChange(Flow *f, AppProto new_proto);
 
 /**
  * \brief Cleans up the app layer protocol detection phase.
@@ -228,4 +230,4 @@ void AppLayerProtoDetectUnittestsRegister(void);
 
 #endif /* UNITTESTS */
 
-#endif /* __APP_LAYER_DETECT_PROTO__H__ */
+#endif /* SURICATA_APP_LAYER_DETECT_PROTO__H */

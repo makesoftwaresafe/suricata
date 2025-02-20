@@ -23,14 +23,15 @@
  *  Storage API
  */
 
-#ifndef __UTIL_STORAGE_H__
-#define __UTIL_STORAGE_H__
+#ifndef SURICATA_UTIL_STORAGE_H
+#define SURICATA_UTIL_STORAGE_H
 
 typedef enum StorageEnum_ {
     STORAGE_HOST,
     STORAGE_FLOW,
     STORAGE_IPPAIR,
     STORAGE_DEVICE,
+    STORAGE_THREAD,
 
     STORAGE_MAX,
 } StorageEnum;
@@ -71,5 +72,4 @@ void *StorageAllocByIdPrealloc(Storage *storage, StorageEnum type, int id);
 void StorageFreeById(Storage *storage, const StorageEnum type, const int id);
 void StorageFreeAll(Storage *storage, const StorageEnum type);
 
-void StorageRegisterTests(void);
 #endif

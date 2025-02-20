@@ -1,2 +1,2 @@
+!/Makefile.in
 *.so
-*.la

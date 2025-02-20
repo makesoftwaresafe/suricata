@@ -757,27 +757,32 @@ Event with ``dump-all-headers`` set to "both":
 Event type: DNS
 ---------------
 
-A new version of dns logging has been introduced to improve how dns answers
-are logged.
-
-With that new version, dns answers are logged in one event
-rather than an event for each answer.
-
-It's possible to customize how a dns answer will be logged with the following
-formats:
+DNS has 2 logging style that can be used together or independently:
 
 * "detailed": "rrname", "rrtype", "rdata" and "ttl" fields are logged for each answer
 * "grouped": answers logged are aggregated by their type (A, AAAA, NS, ...)
 
+If no format is chosen, "detailed" will be used by default.
+
 It will be still possible to use the old DNS logging format, you can control it
 with "version" option in dns configuration section.
+
+Suricata 8.0.0 introduces version 3 of the DNS logging format. This
+update unifies the DNS logging style used by ``dns`` events as well as
+the ``dns`` object in ``alert`` records. See :doc:`DNS Logging Changes
+for 8.0 <../../upgrade/8.0-dns-logging-changes>` for more details on the
+changes to logging format.
+
+.. note:: Suricata 7 style DNS logging can be retained by setting the
+          ``version`` field to 2, however this will be removed in
+          Suricata 9.
 
 Fields
 ~~~~~~
 
 Outline of fields seen in the different kinds of DNS events:
 
-* "type": Indicating DNS message type, can be "answer" or "query".
+* "type": Indicating DNS message type, can be "request" or "response".
 * "id": Identifier field
 * "version": Indicating DNS logging version in use
 * "flags": Indicating DNS answer flag, in hexadecimal (ex: 8180 , please note 0x is not output)
@@ -788,10 +793,11 @@ Outline of fields seen in the different kinds of DNS events:
 * "ra": Indicating in case of DNS answer flag, Recursion Available flag (ex: true if set)
 * "z": Indicating in case of DNS answer flag, Reserved bit (ex: true if set)
 * "rcode": (ex: NOERROR)
-* "rrname": Resource Record Name (ex: a domain name)
-* "rrtype": Resource Record Type (ex: A, AAAA, NS, PTR)
-* "rdata": Resource Data (ex: IP that domain name resolves to)
 * "ttl": Time-To-Live for this resource record
+* "queries": A list of query objects
+* "answers": A list of answer objects
+* "authorities": A list of authority objects
+* "additionals": A list of additional objects
 
 More complex DNS record types may log additional fields for resource data:
 
@@ -822,9 +828,7 @@ One can control which RR types are logged by using the "types" field in the
 suricata.yaml file. If this field is not specified, all RR types are logged.
 More than 50 values can be specified with this field as shown below:
 
-
-::
-
+Configuration::
 
     - eve-log:
         enabled: yes
@@ -838,6 +842,11 @@ More than 50 values can be specified with this field as shown below:
         types:
           - alert
           - dns:
+
+            # Logging format. In 8.0 version 3 is the default. Can be
+            # set to 2 to keep compatibility with Suricata 7.0.
+            # version: 3
+
             # Control logging of requests and responses:
             # - requests: enable logging of DNS queries
             # - responses: enable logging of DNS answers
@@ -859,25 +868,24 @@ More than 50 values can be specified with this field as shown below:
 Examples
 ~~~~~~~~
 
-Example of a DNS query for the IPv4 address of "twitter.com" (resource record type 'A'):
-
-::
-
+Example of a DNS query for the IPv4 address of "twitter.com" (resource record type 'A')::
 
   "dns": {
-      "type": "query",
+      "version": 3,
+      "type": "request",
       "id": 16000,
-      "rrname": "twitter.com",
-      "rrtype":"A"
+      "queries": [
+        {
+          "rrname": "twitter.com",
+          "rrtype": "A"
+        }
+      ]
   }
 
-Example of a DNS answer with "detailed" format:
-
-::
-
+Example of a DNS answer with "detailed" format::
 
   "dns": {
-      "version": 2,
+      "version": 3,
       "type": "answer",
       "id": 45444,
       "flags": "8180",
@@ -885,6 +893,12 @@ Example of a DNS answer with "detailed" format:
       "rd": true,
       "ra": true,
       "rcode": "NOERROR",
+      "queries": [
+        {
+          "rrname": "www.suricata.io",
+          "rrtype": "A"
+        }
+      ],
       "answers": [
         {
           "rrname": "www.suricata.io",
@@ -907,12 +921,10 @@ Example of a DNS answer with "detailed" format:
       ]
   }
 
-Example of a DNS answer with "grouped" format:
-
-::
+Example of a DNS answer with "grouped" format::
 
   "dns": {
-      "version": 2,
+      "version": 3,
       "type": "answer",
       "id": 18523,
       "flags": "8180",
@@ -929,26 +941,6 @@ Example of a DNS answer with "grouped" format:
           "suricata.io"
         ]
       }
-  }
-
-
-Example of a old DNS answer with an IPv4 (resource record type 'A') return:
-
-::
-
-
-  "dns": {
-      "type": "answer",
-      "id":16000,
-      "flags":"8180",
-      "qr":true,
-      "rd":true,
-      "ra":true,
-      "rcode":"NOERROR"
-      "rrname": "twitter.com",
-      "rrtype":"A",
-      "ttl":8,
-      "rdata": "199.16.156.6"
   }
 
 Event type: FTP
@@ -1045,8 +1037,11 @@ If extended logging is enabled the following fields are also included:
 * "notafter": The NotAfter field from the TLS certificate
 * "ja3": The JA3 fingerprint consisting of both a JA3 hash and a JA3 string
 * "ja3s": The JA3S fingerprint consisting of both a JA3 hash and a JA3 string
+* "ja4": The JA4 client fingerprint for TLS
+* "client_alpns": array of strings with ALPN values
+* "server_alpns": array of strings with ALPN values
 
-JA3 must be enabled in the Suricata config file (set 'app-layer.protocols.tls.ja3-fingerprints' to 'yes').
+JA3 and JA4 must be enabled in the Suricata config file (set 'app-layer.protocols.tls.ja3-fingerprints'/'app-layer.protocols.tls.ja4-fingerprints' to 'yes').
 
 In addition to this, custom logging also allows the following fields:
 
@@ -1894,7 +1889,7 @@ Fields
 * "client_protocol_version.major", "client_protocol_version.minor": The RFB protocol version agreed by the client.
 * "authentication.security_type": Security type agreed upon in the logged transaction, e.g. ``2`` is VNC auth.
 * "authentication.vnc.challenge", "authentication.vnc.response": Only available when security type 2 is used. Contains the challenge and response byte buffers exchanged by the server and client as hex strings.
-* "authentication.security-result": Result of the authentication process (``OK``, ``FAIL`` or ``TOOMANY``).
+* "authentication.security_result": Result of the authentication process (``OK``, ``FAIL`` or ``TOOMANY``).
 * "screen_shared": Boolean value describing whether the client requested screen sharing.
 * "framebuffer": Contains metadata about the initial screen setup process. Only available when the handshake completed this far.
 * "framebuffer.width", "framebuffer.height": Screen size as offered by the server.
@@ -1924,7 +1919,7 @@ Example of RFB logging, with full VNC style authentication parameters:
         "challenge": "0805b790b58e967f2b350a0c99de3881",
         "response": "aecb26faeaaa62179636a5934bac1078"
       },
-      "security-result": "OK"
+      "security_result": "OK"
     },
     "screen_shared": false,
     "framebuffer": {
@@ -2687,6 +2682,10 @@ References:
 .. _PostgreSQL message format - BackendKeyData: https://www.postgresql.org/docs
    /current/protocol-message-formats.html#PROTOCOL-MESSAGE-FORMATS-BACKENDKEYDATA
 
+Field Reference
+~~~~~~~~~~~~~~~
+
+.. include:: ../../_generated/pgsql.rst
 
 Event type: IKE
 ---------------
@@ -2915,11 +2914,14 @@ Fields
 * "cyu": List of found CYUs in the packet
 * "cyu[].hash": CYU hash
 * "cyu[].string": CYU string
+* "ja3": The JA3 fingerprint consisting of both a JA3 hash and a JA3 string
+* "ja3s": The JA3S fingerprint consisting of both a JA3 hash and a JA3 string
+* "ja4": The JA4 client fingerprint for QUIC
 
 Examples
 ~~~~~~~~
 
-Example of QUIC logging with a CYU hash:
+Example of QUIC logging with CYU, JA3 and JA4 hashes (note that the JA4 hash is only an example to illustrate the format and does not correlate with the others):
 
 ::
 
@@ -2931,8 +2933,18 @@ Example of QUIC logging with a CYU hash:
             "hash": "7b3ceb1adc974ad360cfa634e8d0a730",
             "string": "46,PAD-SNI-STK-SNO-VER-CCS-NONC-AEAD-UAID-SCID-TCID-PDMD-SMHL-ICSL-NONP-PUBS-MIDS-SCLS-KEXS-XLCT-CSCT-COPT-CCRT-IRTT-CFCW-SFCW"
         }
-    ]
+    ],
+    "ja3": {
+        "hash": "324f8c50e267adba4b5dd06c964faf67",
+        "string": "771,4865-4866-4867,51-43-13-27-17513-16-45-0-10-57,29-23-24,"
+    },
+    "ja4": "q13d0310h3_55b375c5d22e_cd85d2d88918"
   }
+
+Output Reference
+~~~~~~~~~~~~~~~~
+
+.. include:: ../../_generated/quic.rst
 
 Event type: DHCP
 -----------------
@@ -3001,4 +3013,47 @@ Example of DHCP log entry (extended logging enabled):
     "rebinding_time":43200,
     "client_id":"54:ee:75:51:e0:66",
     "dns_servers":["192.168.1.50","192.168.1.49"]
+  }
+
+Event type: ARP
+---------------
+
+Fields
+~~~~~~
+
+* "hw_type": network link protocol type
+* "proto_type": internetwork protocol for which the request is intended
+* "opcode": operation that the sender is performing (e.g. request, response)  
+* "src_mac": source MAC address
+* "src_ip": source IP address
+* "dest_mac": destination MAC address
+* "dest_ip": destination IP address
+
+Examples
+~~~~~~~~
+
+Example of ARP logging: request and response
+
+::
+
+  "arp": {
+    "hw_type": "ethernet",
+    "proto_type": "ipv4",
+    "opcode": "request",
+    "src_mac": "00:1a:6b:6c:0c:cc",
+    "src_ip": "10.10.10.2",
+    "dest_mac": "00:00:00:00:00:00",
+    "dest_ip": "10.10.10.1"
+  }
+
+::
+
+  "arp": {
+    "hw_type": "ethernet",
+    "proto_type": "ipv4",
+    "opcode": "reply",
+    "src_mac": "00:1a:6b:6c:0c:cc",
+    "src_ip": "10.10.10.2",
+    "dest_mac": "00:1d:09:f0:92:ab",
+    "dest_ip": "10.10.10.1"
   }

@@ -67,7 +67,7 @@ static InspectionBuffer *GetSshData(DetectEngineThreadCtx *det_ctx,
         const uint8_t *protocol = NULL;
         uint32_t b_len = 0;
 
-        if (rs_ssh_tx_get_protocol(txv, &protocol, &b_len, flow_flags) != 1)
+        if (SCSshTxGetProtocol(txv, &protocol, &b_len, flow_flags) != 1)
             return NULL;
         if (protocol == NULL || b_len == 0) {
             SCLogDebug("SSH protocol not set");
@@ -94,12 +94,12 @@ static int DetectSshProtocolSetup(DetectEngineCtx *de_ctx, Signature *s, const c
 
 void DetectSshProtocolRegister(void)
 {
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].name = KEYWORD_NAME;
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].alias = KEYWORD_NAME_LEGACY;
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].desc = BUFFER_NAME " sticky buffer";
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].url = "/rules/" KEYWORD_DOC;
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].Setup = DetectSshProtocolSetup;
-    sigmatch_table[DETECT_AL_SSH_PROTOCOL].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_SSH_PROTOCOL].name = KEYWORD_NAME;
+    sigmatch_table[DETECT_SSH_PROTOCOL].alias = KEYWORD_NAME_LEGACY;
+    sigmatch_table[DETECT_SSH_PROTOCOL].desc = BUFFER_NAME " sticky buffer";
+    sigmatch_table[DETECT_SSH_PROTOCOL].url = "/rules/" KEYWORD_DOC;
+    sigmatch_table[DETECT_SSH_PROTOCOL].Setup = DetectSshProtocolSetup;
+    sigmatch_table[DETECT_SSH_PROTOCOL].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
 
     DetectAppLayerMpmRegister(BUFFER_NAME, SIG_FLAG_TOSERVER, 2, PrefilterGenericMpmRegister,
             GetSshData, ALPROTO_SSH, SshStateBannerDone),

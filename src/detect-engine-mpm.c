@@ -86,9 +86,9 @@ static int g_mpm_list_cnt[DETECT_BUFFER_MPM_TYPE_SIZE] = { 0, 0, 0 };
  *
  *  \note to be used at start up / registration only. Errors are fatal.
  */
-void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
+static void RegisterInternal(const char *name, int direction, int priority,
         PrefilterRegisterFunc PrefilterRegister, InspectionBufferGetDataPtr GetData,
-        AppProto alproto, int tx_min_progress)
+        InspectionMultiBufferGetDataPtr GetMultiData, AppProto alproto, int tx_min_progress)
 {
     SCLogDebug("registering %s/%d/%d/%p/%p/%u/%d", name, direction, priority,
             PrefilterRegister, GetData, alproto, tx_min_progress);
@@ -107,6 +107,11 @@ void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
         FatalError("MPM engine registration for %s failed", name);
     }
 
+    // every HTTP2 can be accessed from DOH2
+    if (alproto == ALPROTO_HTTP2 || alproto == ALPROTO_DNS) {
+        RegisterInternal(name, direction, priority, PrefilterRegister, GetData, GetMultiData,
+                ALPROTO_DOH2, tx_min_progress);
+    }
     DetectBufferMpmRegistry *am = SCCalloc(1, sizeof(*am));
     BUG_ON(am == NULL);
     am->name = name;
@@ -119,7 +124,11 @@ void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
     am->type = DETECT_BUFFER_MPM_TYPE_APP;
 
     am->PrefilterRegisterWithListId = PrefilterRegister;
-    am->app_v2.GetData = GetData;
+    if (GetData != NULL) {
+        am->app_v2.GetData = GetData;
+    } else if (GetMultiData != NULL) {
+        am->app_v2.GetMultiData = GetMultiData;
+    }
     am->app_v2.alproto = alproto;
     am->app_v2.tx_min_progress = tx_min_progress;
 
@@ -137,6 +146,22 @@ void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
     g_mpm_list_cnt[DETECT_BUFFER_MPM_TYPE_APP]++;
 
     SupportFastPatternForSigMatchList(sm_list, priority);
+}
+
+void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
+        PrefilterRegisterFunc PrefilterRegister, InspectionBufferGetDataPtr GetData,
+        AppProto alproto, int tx_min_progress)
+{
+    RegisterInternal(
+            name, direction, priority, PrefilterRegister, GetData, NULL, alproto, tx_min_progress);
+}
+
+void DetectAppLayerMpmMultiRegister(const char *name, int direction, int priority,
+        PrefilterRegisterFunc PrefilterRegister, InspectionMultiBufferGetDataPtr GetData,
+        AppProto alproto, int tx_min_progress)
+{
+    RegisterInternal(
+            name, direction, priority, PrefilterRegister, NULL, GetData, alproto, tx_min_progress);
 }
 
 /** \brief copy a mpm engine from parent_id, add in transforms */
@@ -772,18 +797,12 @@ int SignatureHasPacketContent(const Signature *s)
 {
     SCEnter();
 
-    if (s == NULL) {
-        SCReturnInt(0);
-    }
-
     if (!(s->proto.proto[IPPROTO_TCP / 8] & 1 << (IPPROTO_TCP % 8))) {
         SCReturnInt(1);
     }
 
-    if ((s->init_data != NULL && s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL) ||
-        (s->init_data == NULL && s->sm_arrays[DETECT_SM_LIST_PMATCH] == NULL))
-    {
-        SCLogDebug("no mpm");
+    if (s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL) {
+        SCLogDebug("no PMATCH");
         SCReturnInt(0);
     }
 
@@ -808,18 +827,12 @@ int SignatureHasStreamContent(const Signature *s)
 {
     SCEnter();
 
-    if (s == NULL) {
-        SCReturnInt(0);
-    }
-
     if (!(s->proto.proto[IPPROTO_TCP / 8] & 1 << (IPPROTO_TCP % 8))) {
         SCReturnInt(0);
     }
 
-    if ((s->init_data != NULL && s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL) ||
-        (s->init_data == NULL && s->sm_arrays[DETECT_SM_LIST_PMATCH] == NULL))
-    {
-        SCLogDebug("no mpm");
+    if (s->init_data->smlists[DETECT_SM_LIST_PMATCH] == NULL) {
+        SCLogDebug("no PMATCH");
         SCReturnInt(0);
     }
 
@@ -890,11 +903,6 @@ void PatternMatchDestroy(MpmCtx *mpm_ctx, uint16_t mpm_matcher)
     mpm_table[mpm_matcher].DestroyCtx(mpm_ctx);
 }
 
-void PatternMatchThreadPrint(MpmThreadCtx *mpm_thread_ctx, uint16_t mpm_matcher)
-{
-    SCLogDebug("mpm_thread_ctx %p, mpm_matcher %"PRIu16" defunct", mpm_thread_ctx, mpm_matcher);
-    //mpm_table[mpm_matcher].PrintThreadCtx(mpm_thread_ctx);
-}
 void PatternMatchThreadDestroy(MpmThreadCtx *mpm_thread_ctx, uint16_t mpm_matcher)
 {
     SCLogDebug("mpm_thread_ctx %p, mpm_matcher %"PRIu16"", mpm_thread_ctx, mpm_matcher);
@@ -991,8 +999,6 @@ static void PopulateMpmHelperAddPattern(MpmCtx *mpm_ctx, const DetectContentData
                             cd->id, s->num, flags|MPM_PATTERN_CTX_OWNS_ID);
         }
     }
-
-    return;
 }
 
 #define SGH_PROTO(sgh, p) ((sgh)->init->protos[(p)] == 1)
@@ -1024,7 +1030,6 @@ static void SetMpm(Signature *s, SigMatch *mpm_sm, const int mpm_sm_list)
     cd->flags |= DETECT_CONTENT_MPM;
     s->init_data->mpm_sm_list = mpm_sm_list;
     s->init_data->mpm_sm = mpm_sm;
-    return;
 }
 
 static SigMatch *GetMpmForList(const Signature *s, SigMatch *list, SigMatch *mpm_sm,
@@ -1120,6 +1125,9 @@ void RetrieveFPForSig(const DetectEngineCtx *de_ctx, Signature *s)
         }
 
         for (SigMatch *sm = s->init_data->buffers[x].head; sm != NULL; sm = sm->next) {
+            // a buffer with absent keyword cannot be used as fast_pattern
+            if (sm->type == DETECT_ABSENT)
+                break;
             if (sm->type != DETECT_CONTENT)
                 continue;
 
@@ -1266,7 +1274,6 @@ void RetrieveFPForSig(const DetectEngineCtx *de_ctx, Signature *s)
 #endif
     /* assign to signature */
     SetMpm(s, mpm_sm, mpm_sm_list);
-    return;
 }
 
 /** \internal
@@ -1526,7 +1533,6 @@ void MpmStoreFree(DetectEngineCtx *de_ctx)
 
     HashListTableFree(de_ctx->mpm_hash_table);
     de_ctx->mpm_hash_table = NULL;
-    return;
 }
 
 static void MpmStoreSetup(const DetectEngineCtx *de_ctx, MpmStore *ms)
@@ -1571,6 +1577,9 @@ static void MpmStoreSetup(const DetectEngineCtx *de_ctx, MpmStore *ms)
 
     MpmInitCtx(ms->mpm_ctx, de_ctx->mpm_matcher);
 
+    const bool mpm_supports_endswith =
+            (mpm_table[de_ctx->mpm_matcher].feature_flags & MPM_FEATURE_FLAG_ENDSWITH) != 0;
+
     /* add the patterns */
     for (sig = 0; sig < (ms->sid_array_size * 8); sig++) {
         if (ms->sid_array[sig / 8] & (1 << (sig % 8))) {
@@ -1597,8 +1606,11 @@ static void MpmStoreSetup(const DetectEngineCtx *de_ctx, MpmStore *ms)
             }
 
             if (!skip) {
-                PopulateMpmHelperAddPattern(ms->mpm_ctx,
-                        cd, s, 0, (cd->flags & DETECT_CONTENT_FAST_PATTERN_CHOP));
+                uint8_t flags = 0;
+                if ((cd->flags & DETECT_CONTENT_ENDS_WITH) && mpm_supports_endswith)
+                    flags = MPM_PATTERN_FLAG_ENDSWITH;
+                PopulateMpmHelperAddPattern(ms->mpm_ctx, cd, s, flags,
+                        (cd->flags & DETECT_CONTENT_FAST_PATTERN_CHOP) != 0);
             }
         }
     }
@@ -1963,7 +1975,7 @@ static void PrepareMpms(DetectEngineCtx *de_ctx, SigGroupHead *sh)
     const int max_buffer_id = de_ctx->buffer_type_id + 1;
     const uint32_t max_sid = DetectEngineGetMaxSigId(de_ctx) / 8 + 1;
 
-    AppProto engines[max_buffer_id][ALPROTO_MAX];
+    AppProto engines[max_buffer_id][g_alproto_max];
     memset(engines, 0, sizeof(engines));
     int engines_idx[max_buffer_id];
     memset(engines_idx, 0, sizeof(engines_idx));
@@ -2406,12 +2418,7 @@ int DetectSetFastPatternAndItsId(DetectEngineCtx *de_ctx)
 {
     uint32_t cnt = 0;
     for (Signature *s = de_ctx->sig_list; s != NULL; s = s->next) {
-        if (s->flags & SIG_FLAG_PREFILTER)
-            continue;
-
-        RetrieveFPForSig(de_ctx, s);
         if (s->init_data->mpm_sm != NULL) {
-            s->flags |= SIG_FLAG_PREFILTER;
             cnt++;
         }
     }

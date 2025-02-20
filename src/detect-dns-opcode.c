@@ -19,6 +19,7 @@
 
 #include "detect-parse.h"
 #include "detect-engine.h"
+#include "detect-engine-uint.h"
 #include "detect-dns-opcode.h"
 #include "rust.h"
 
@@ -35,14 +36,14 @@ static int DetectDnsOpcodeSetup(DetectEngineCtx *de_ctx, Signature *s,
         return -1;
     }
 
-    void *detect = rs_detect_dns_opcode_parse(str);
+    void *detect = DetectU8Parse(str);
     if (detect == NULL) {
         SCLogError("failed to parse dns.opcode: %s", str);
         return -1;
     }
 
-    if (SigMatchAppendSMToList(de_ctx, s, DETECT_AL_DNS_OPCODE, (SigMatchCtx *)detect,
-                dns_opcode_list_id) == NULL) {
+    if (SigMatchAppendSMToList(
+                de_ctx, s, DETECT_DNS_OPCODE, (SigMatchCtx *)detect, dns_opcode_list_id) == NULL) {
         goto error;
     }
 
@@ -57,7 +58,7 @@ static void DetectDnsOpcodeFree(DetectEngineCtx *de_ctx, void *ptr)
 {
     SCEnter();
     if (ptr != NULL) {
-        rs_dns_detect_opcode_free(ptr);
+        rs_detect_u8_free(ptr);
     }
     SCReturn;
 }
@@ -66,18 +67,17 @@ static int DetectDnsOpcodeMatch(DetectEngineThreadCtx *det_ctx,
     Flow *f, uint8_t flags, void *state, void *txv, const Signature *s,
     const SigMatchCtx *ctx)
 {
-    return rs_dns_opcode_match(txv, (void *)ctx, flags);
+    return SCDnsDetectOpcodeMatch(txv, (void *)ctx, flags);
 }
 
 void DetectDnsOpcodeRegister(void)
 {
-    sigmatch_table[DETECT_AL_DNS_OPCODE].name  = "dns.opcode";
-    sigmatch_table[DETECT_AL_DNS_OPCODE].desc  = "Match the DNS header opcode flag.";
-    sigmatch_table[DETECT_AL_DNS_OPCODE].Setup = DetectDnsOpcodeSetup;
-    sigmatch_table[DETECT_AL_DNS_OPCODE].Free  = DetectDnsOpcodeFree;
-    sigmatch_table[DETECT_AL_DNS_OPCODE].Match = NULL;
-    sigmatch_table[DETECT_AL_DNS_OPCODE].AppLayerTxMatch =
-        DetectDnsOpcodeMatch;
+    sigmatch_table[DETECT_DNS_OPCODE].name = "dns.opcode";
+    sigmatch_table[DETECT_DNS_OPCODE].desc = "Match the DNS header opcode flag.";
+    sigmatch_table[DETECT_DNS_OPCODE].Setup = DetectDnsOpcodeSetup;
+    sigmatch_table[DETECT_DNS_OPCODE].Free = DetectDnsOpcodeFree;
+    sigmatch_table[DETECT_DNS_OPCODE].Match = NULL;
+    sigmatch_table[DETECT_DNS_OPCODE].AppLayerTxMatch = DetectDnsOpcodeMatch;
 
     DetectAppLayerInspectEngineRegister(
             "dns.opcode", ALPROTO_DNS, SIG_FLAG_TOSERVER, 0, DetectEngineInspectGenericList, NULL);

@@ -94,7 +94,7 @@ static int JsonNFSLogger(ThreadVars *tv, void *thread_data,
     jb_close(jb);
 
     MemBufferReset(thread->buffer);
-    OutputJsonBuilderBuffer(jb, thread);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, thread);
     jb_free(jb);
     return TM_ECODE_OK;
 }
@@ -111,7 +111,7 @@ void JsonNFSLogRegister(void)
 {
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonNFSLog", "eve-log.nfs", NFSLogInitSub,
-            ALPROTO_NFS, JsonNFSLogger, JsonLogThreadInit, JsonLogThreadDeinit, NULL);
+            ALPROTO_NFS, JsonNFSLogger, JsonLogThreadInit, JsonLogThreadDeinit);
 
     SCLogDebug("NFS JSON logger registered.");
 }

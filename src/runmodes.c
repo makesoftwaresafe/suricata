@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2022 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -23,18 +23,11 @@
  */
 
 #include "suricata-common.h"
-#include "detect.h"
 #include "detect-engine.h"
-#include "detect-engine-mpm.h"
 #include "app-layer-parser.h"
-#include "tm-threads.h"
 #include "util-debug.h"
-#include "util-time.h"
-#include "util-cpu.h"
-#include "util-byte.h"
 #include "util-affinity.h"
 #include "conf.h"
-#include "queue.h"
 #include "runmodes.h"
 #include "runmode-af-packet.h"
 #include "runmode-af-xdp.h"
@@ -42,13 +35,11 @@
 #include "runmode-erf-dag.h"
 #include "runmode-erf-file.h"
 #include "runmode-ipfw.h"
-#include "runmode-napatech.h"
 #include "runmode-netmap.h"
 #include "runmode-nflog.h"
 #include "runmode-nfq.h"
 #include "runmode-pcap.h"
 #include "runmode-pcap-file.h"
-#include "runmode-pfring.h"
 #include "runmode-unix-socket.h"
 #include "runmode-windivert.h"
 #include "util-unittest.h"
@@ -57,19 +48,13 @@
 
 #include "output.h"
 
-#include "alert-fastlog.h"
-#include "alert-debuglog.h"
-
-#include "log-httplog.h"
-
-#include "source-pfring.h"
-
 #include "tmqh-flow.h"
 #include "flow-manager.h"
 #include "flow-bypass.h"
 #include "counters.h"
 
 #include "suricata-plugin.h"
+#include "util-device.h"
 
 int debuglog_enabled = 0;
 bool threading_set_cpu_affinity = false;
@@ -98,7 +83,7 @@ typedef struct RunMode_ {
     const char *description;
     /* runmode function */
     int (*RunModeFunc)(void);
-    void (*RunModeIsIPSEnabled)(void);
+    int (*RunModeIsIPSEnabled)(void);
 } RunMode;
 
 typedef struct RunModes_ {
@@ -135,12 +120,6 @@ static const char *RunModeTranslateModeToName(int runmode)
             return "PCAP_DEV";
         case RUNMODE_PCAP_FILE:
             return "PCAP_FILE";
-        case RUNMODE_PFRING:
-#ifdef HAVE_PFRING
-            return "PFRING";
-#else
-            return "PFRING(DISABLED)";
-#endif
         case RUNMODE_PLUGIN:
             return "PLUGIN";
         case RUNMODE_NFQ:
@@ -153,8 +132,6 @@ static const char *RunModeTranslateModeToName(int runmode)
             return "ERF_FILE";
         case RUNMODE_DAG:
             return "ERF_DAG";
-        case RUNMODE_NAPATECH:
-            return "NAPATECH";
         case RUNMODE_UNITTEST:
             return "UNITTEST";
         case RUNMODE_AFP_DEV:
@@ -228,7 +205,7 @@ char *RunmodeGetActive(void)
  */
 const char *RunModeGetMainMode(void)
 {
-    int mainmode = RunmodeGetCurrent();
+    int mainmode = SCRunmodeGet();
 
     return RunModeTranslateModeToName(mainmode);
 }
@@ -242,12 +219,10 @@ void RunModeRegisterRunModes(void)
 
     RunModeIdsPcapRegister();
     RunModeFilePcapRegister();
-    RunModeIdsPfringRegister();
     RunModeIpsNFQRegister();
     RunModeIpsIPFWRegister();
     RunModeErfFileRegister();
     RunModeErfDagRegister();
-    RunModeNapatechRegister();
     RunModeIdsAFPRegister();
     RunModeIdsAFXDPRegister();
     RunModeIdsNetmapRegister();
@@ -258,7 +233,6 @@ void RunModeRegisterRunModes(void)
 #ifdef UNITTESTS
     UtRunModeRegister();
 #endif
-    return;
 }
 
 /**
@@ -301,8 +275,6 @@ void RunModeListRunmodes(void)
                    "-----------------------\n");
         }
     }
-
-    return;
 }
 
 static const char *RunModeGetConfOrDefault(int capture_mode, const char *capture_plugin_name)
@@ -323,11 +295,6 @@ static const char *RunModeGetConfOrDefault(int capture_mode, const char *capture
             case RUNMODE_PCAP_FILE:
                 custom_mode = RunModeFilePcapGetDefaultMode();
                 break;
-#ifdef HAVE_PFRING
-            case RUNMODE_PFRING:
-                custom_mode = RunModeIdsPfringGetDefaultMode();
-                break;
-#endif
             case RUNMODE_PLUGIN: {
 #ifdef HAVE_PLUGINS
                 SCCapturePlugin *plugin = SCPluginFindCaptureByName(capture_plugin_name);
@@ -349,9 +316,6 @@ static const char *RunModeGetConfOrDefault(int capture_mode, const char *capture
                 break;
             case RUNMODE_DAG:
                 custom_mode = RunModeErfDagGetDefaultMode();
-                break;
-            case RUNMODE_NAPATECH:
-                custom_mode = RunModeNapatechGetDefaultMode();
                 break;
             case RUNMODE_AFP_DEV:
                 custom_mode = RunModeAFPGetDefaultMode();
@@ -393,22 +357,32 @@ static const char *RunModeGetConfOrDefault(int capture_mode, const char *capture
     return custom_mode;
 }
 
-void RunModeEngineIsIPS(int capture_mode, const char *runmode, const char *capture_plugin_name)
+int RunModeEngineIsIPS(int capture_mode, const char *runmode, const char *capture_plugin_name)
 {
     if (runmode == NULL) {
         runmode = RunModeGetConfOrDefault(capture_mode, capture_plugin_name);
         if (runmode == NULL) // non-standard runmode
-            return;
+            return 0;
     }
 
     RunMode *mode = RunModeGetCustomMode(capture_mode, runmode);
     if (mode == NULL) {
-        return;
+        return 0;
     }
 
+    int ips_enabled = 0;
     if (mode->RunModeIsIPSEnabled != NULL) {
-        mode->RunModeIsIPSEnabled();
+        ips_enabled = mode->RunModeIsIPSEnabled();
+        if (ips_enabled == 1) {
+            extern uint16_t g_livedev_mask;
+            if (g_livedev_mask != 0 && LiveGetDeviceCount() > 0) {
+                SCLogWarning("disabling livedev.use-for-tracking with IPS mode. See ticket #6726.");
+                g_livedev_mask = 0;
+            }
+        }
     }
+
+    return ips_enabled;
 }
 
 /**
@@ -462,6 +436,7 @@ void RunModeDispatch(int runmode, const char *custom_mode, const char *capture_p
             BypassedFlowManagerThreadSpawn();
         }
         StatsSpawnThreads();
+        TmThreadsSealThreads();
     }
 }
 
@@ -489,7 +464,7 @@ int RunModeNeedsBypassManager(void)
  * \param RunModeFunc The function to be run for this runmode.
  */
 void RunModeRegisterNewRunMode(enum RunModes runmode, const char *name, const char *description,
-        int (*RunModeFunc)(void), void (*RunModeIsIPSEnabled)(void))
+        int (*RunModeFunc)(void), int (*RunModeIsIPSEnabled)(void))
 {
     if (RunModeGetCustomMode(runmode, name) != NULL) {
         FatalError("runmode '%s' has already "
@@ -521,8 +496,6 @@ void RunModeRegisterNewRunMode(enum RunModes runmode, const char *name, const ch
     }
     mode->RunModeFunc = RunModeFunc;
     mode->RunModeIsIPSEnabled = RunModeIsIPSEnabled;
-
-    return;
 }
 
 /**
@@ -546,12 +519,6 @@ static void RunOutputFreeList(void)
 
 static int file_logger_count = 0;
 static int filedata_logger_count = 0;
-static LoggerId logger_bits[ALPROTO_MAX];
-
-int RunModeOutputFileEnabled(void)
-{
-    return file_logger_count > 0;
-}
 
 int RunModeOutputFiledataEnabled(void)
 {
@@ -622,20 +589,19 @@ static void AddOutputToFreeList(OutputModule *module, OutputCtx *output_ctx)
 }
 
 /** \brief Turn output into thread module */
-static void SetupOutput(const char *name, OutputModule *module, OutputCtx *output_ctx)
+static void SetupOutput(
+        const char *name, OutputModule *module, OutputCtx *output_ctx, LoggerId *logger_bits)
 {
     /* flow logger doesn't run in the packet path */
     if (module->FlowLogFunc) {
-        OutputRegisterFlowLogger(module->name, module->FlowLogFunc,
-            output_ctx, module->ThreadInit, module->ThreadDeinit,
-            module->ThreadExitPrintStats);
+        SCOutputRegisterFlowLogger(module->name, module->FlowLogFunc, output_ctx,
+                module->ThreadInit, module->ThreadDeinit);
         return;
     }
     /* stats logger doesn't run in the packet path */
     if (module->StatsLogFunc) {
-        OutputRegisterStatsLogger(module->name, module->StatsLogFunc,
-            output_ctx,module->ThreadInit, module->ThreadDeinit,
-            module->ThreadExitPrintStats);
+        OutputRegisterStatsLogger(module->name, module->StatsLogFunc, output_ctx,
+                module->ThreadInit, module->ThreadDeinit);
         return;
     }
 
@@ -645,45 +611,37 @@ static void SetupOutput(const char *name, OutputModule *module, OutputCtx *outpu
 
     if (module->PacketLogFunc) {
         SCLogDebug("%s is a packet logger", module->name);
-        OutputRegisterPacketLogger(module->logger_id, module->name,
-            module->PacketLogFunc, module->PacketConditionFunc, output_ctx,
-            module->ThreadInit, module->ThreadDeinit,
-            module->ThreadExitPrintStats);
+        SCOutputRegisterPacketLogger(module->logger_id, module->name, module->PacketLogFunc,
+                module->PacketConditionFunc, output_ctx, module->ThreadInit, module->ThreadDeinit);
     } else if (module->TxLogFunc) {
         SCLogDebug("%s is a tx logger", module->name);
-        OutputRegisterTxLogger(module->logger_id, module->name, module->alproto,
-                module->TxLogFunc, output_ctx, module->tc_log_progress,
-                module->ts_log_progress, module->TxLogCondition,
-                module->ThreadInit, module->ThreadDeinit,
-                module->ThreadExitPrintStats);
+        SCOutputRegisterTxLogger(module->logger_id, module->name, module->alproto,
+                module->TxLogFunc, output_ctx, module->tc_log_progress, module->ts_log_progress,
+                module->TxLogCondition, module->ThreadInit, module->ThreadDeinit);
         /* Not used with wild card loggers */
         if (module->alproto != ALPROTO_UNKNOWN) {
             logger_bits[module->alproto] |= BIT_U32(module->logger_id);
         }
     } else if (module->FiledataLogFunc) {
         SCLogDebug("%s is a filedata logger", module->name);
-        OutputRegisterFiledataLogger(module->logger_id, module->name,
-            module->FiledataLogFunc, output_ctx, module->ThreadInit,
-            module->ThreadDeinit, module->ThreadExitPrintStats);
+        SCOutputRegisterFiledataLogger(module->logger_id, module->name, module->FiledataLogFunc,
+                output_ctx, module->ThreadInit, module->ThreadDeinit);
         filedata_logger_count++;
     } else if (module->FileLogFunc) {
         SCLogDebug("%s is a file logger", module->name);
-        OutputRegisterFileLogger(module->logger_id, module->name,
-            module->FileLogFunc, output_ctx, module->ThreadInit,
-            module->ThreadDeinit, module->ThreadExitPrintStats);
+        SCOutputRegisterFileLogger(module->logger_id, module->name, module->FileLogFunc, output_ctx,
+                module->ThreadInit, module->ThreadDeinit);
         file_logger_count++;
     } else if (module->StreamingLogFunc) {
         SCLogDebug("%s is a streaming logger", module->name);
-        OutputRegisterStreamingLogger(module->logger_id, module->name,
-            module->StreamingLogFunc, output_ctx, module->stream_type,
-            module->ThreadInit, module->ThreadDeinit,
-            module->ThreadExitPrintStats);
+        SCOutputRegisterStreamingLogger(module->logger_id, module->name, module->StreamingLogFunc,
+                output_ctx, module->stream_type, module->ThreadInit, module->ThreadDeinit);
     } else {
         SCLogError("Unknown logger type: name=%s", module->name);
     }
 }
 
-static void RunModeInitializeEveOutput(ConfNode *conf, OutputCtx *parent_ctx)
+static void RunModeInitializeEveOutput(ConfNode *conf, OutputCtx *parent_ctx, LoggerId *logger_bits)
 {
     ConfNode *types = ConfNodeLookupChild(conf, "types");
     SCLogDebug("types %p", types);
@@ -736,8 +694,7 @@ static void RunModeInitializeEveOutput(ConfNode *conf, OutputCtx *parent_ctx)
                 }
 
                 AddOutputToFreeList(sub_module, result.ctx);
-                SetupOutput(sub_module->name, sub_module,
-                        result.ctx);
+                SetupOutput(sub_module->name, sub_module, result.ctx, logger_bits);
             }
         }
 
@@ -750,7 +707,7 @@ static void RunModeInitializeEveOutput(ConfNode *conf, OutputCtx *parent_ctx)
     }
 }
 
-static void RunModeInitializeLuaOutput(ConfNode *conf, OutputCtx *parent_ctx)
+static void RunModeInitializeLuaOutput(ConfNode *conf, OutputCtx *parent_ctx, LoggerId *logger_bits)
 {
     OutputModule *lua_module = OutputGetModuleByConfName("lua");
     BUG_ON(lua_module == NULL);
@@ -778,7 +735,7 @@ static void RunModeInitializeLuaOutput(ConfNode *conf, OutputCtx *parent_ctx)
         }
 
         AddOutputToFreeList(m, result.ctx);
-        SetupOutput(m->name, m, result.ctx);
+        SetupOutput(m->name, m, result.ctx, logger_bits);
     }
 }
 
@@ -801,8 +758,9 @@ void RunModeInitializeOutputs(void)
     char tls_log_enabled = 0;
     char tls_store_present = 0;
 
-    memset(&logger_bits, 0, sizeof(logger_bits));
-
+    // g_alproto_max is set to its final value
+    LoggerId logger_bits[g_alproto_max];
+    memset(logger_bits, 0, g_alproto_max * sizeof(LoggerId));
     TAILQ_FOREACH(output, &outputs->head, next) {
 
         output_config = ConfNodeLookupChild(output, output->val);
@@ -835,13 +793,6 @@ void RunModeInitializeOutputs(void)
         } else if (strncmp(output->val, "unified2-", sizeof("unified2-") - 1) == 0) {
             SCLogWarning("Unified2 is no longer supported.");
             continue;
-        } else if (strcmp(output->val, "lua") == 0) {
-#ifndef HAVE_LUA
-            SCLogWarning("lua support not compiled in. Reconfigure/"
-                         "recompile with lua(jit) and its development "
-                         "files installed to add lua support.");
-            continue;
-#endif
         } else if (strcmp(output->val, "dns-log") == 0) {
             SCLogWarning("dns-log is not longer available as of Suricata 5.0");
             continue;
@@ -875,7 +826,7 @@ void RunModeInitializeOutputs(void)
 
             // TODO if module == parent, find it's children
             if (strcmp(output->val, "eve-log") == 0) {
-                RunModeInitializeEveOutput(output_config, output_ctx);
+                RunModeInitializeEveOutput(output_config, output_ctx, logger_bits);
 
                 /* add 'eve-log' to free list as it's the owner of the
                  * main output ctx from which the sub-modules share the
@@ -885,11 +836,11 @@ void RunModeInitializeOutputs(void)
                 SCLogDebug("handle lua");
                 if (output_ctx == NULL)
                     continue;
-                RunModeInitializeLuaOutput(output_config, output_ctx);
+                RunModeInitializeLuaOutput(output_config, output_ctx, logger_bits);
                 AddOutputToFreeList(module, output_ctx);
             } else {
                 AddOutputToFreeList(module, output_ctx);
-                SetupOutput(module->name, module, output_ctx);
+                SetupOutput(module->name, module, output_ctx, logger_bits);
             }
         }
         if (count == 0) {
@@ -928,14 +879,14 @@ void RunModeInitializeOutputs(void)
                 }
 
                 AddOutputToFreeList(module, output_ctx);
-                SetupOutput(module->name, module, output_ctx);
+                SetupOutput(module->name, module, output_ctx, logger_bits);
             }
         }
     }
 
     /* register the logger bits to the app-layer */
     AppProto a;
-    for (a = 0; a < ALPROTO_MAX; a++) {
+    for (a = 0; a < g_alproto_max; a++) {
         if (AppLayerParserSupportsFiles(IPPROTO_TCP, a)) {
             if (g_file_logger_enabled)
                 logger_bits[a] |= BIT_U32(LOGGER_FILE);
@@ -970,7 +921,6 @@ void RunModeInitializeOutputs(void)
             AppLayerParserRegisterLoggerBits(IPPROTO_TCP, a, logger_bits[a]);
         if (udp)
             AppLayerParserRegisterLoggerBits(IPPROTO_UDP, a, logger_bits[a]);
-
     }
     OutputSetupActiveLoggers();
 }
@@ -1018,7 +968,7 @@ void RunModeInitializeThreadSettings(void)
         size_t size;
         if (pthread_attr_getstacksize(&attr, &size) == 0 && size < 512 * 1024) {
             threading_set_stack_size = 512 * 1024;
-            SCLogNotice("thread stack size of %" PRIuMAX " to too small: setting to 512k",
+            SCLogNotice("thread stack size of %" PRIuMAX " too small: setting to 512k",
                     (uintmax_t)size);
         }
     }

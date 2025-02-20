@@ -56,26 +56,40 @@
 #include "util-unittest.h"
 #include "util-unittest-helper.h"
 
+#ifndef HAVE_JA3
+static int DetectJA3SetupNoSupport(DetectEngineCtx *a, Signature *b, const char *c)
+{
+    SCLogError("no JA3 support built in");
+    return -1;
+}
+#endif /* HAVE_JA3 */
+
+#ifdef HAVE_JA3
 static int DetectTlsJa3SStringSetup(DetectEngineCtx *, Signature *, const char *);
 static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
        const DetectEngineTransforms *transforms,
        Flow *f, const uint8_t flow_flags,
        void *txv, const int list_id);
 static int g_tls_ja3s_str_buffer_id = 0;
+#endif
 
 /**
  * \brief Registration function for keyword: ja3s.string
  */
 void DetectTlsJa3SStringRegister(void)
 {
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].name = "ja3s.string";
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].desc =
-            "sticky buffer to match the JA3S string buffer";
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].url = "/rules/ja3-keywords.html#ja3s-string";
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].Setup = DetectTlsJa3SStringSetup;
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].flags |= SIGMATCH_NOOPT;
-    sigmatch_table[DETECT_AL_TLS_JA3S_STRING].flags |= SIGMATCH_INFO_STICKY_BUFFER;
+    sigmatch_table[DETECT_TLS_JA3S_STRING].name = "ja3s.string";
+    sigmatch_table[DETECT_TLS_JA3S_STRING].desc = "sticky buffer to match the JA3S string buffer";
+    sigmatch_table[DETECT_TLS_JA3S_STRING].url = "/rules/ja3-keywords.html#ja3s-string";
+#ifdef HAVE_JA3
+    sigmatch_table[DETECT_TLS_JA3S_STRING].Setup = DetectTlsJa3SStringSetup;
+#else  /* HAVE_JA3 */
+    sigmatch_table[DETECT_TLS_JA3S_STRING].Setup = DetectJA3SetupNoSupport;
+#endif /* HAVE_JA3 */
+    sigmatch_table[DETECT_TLS_JA3S_STRING].flags |= SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_TLS_JA3S_STRING].flags |= SIGMATCH_INFO_STICKY_BUFFER;
 
+#ifdef HAVE_JA3
     DetectAppLayerInspectEngineRegister("ja3s.string", ALPROTO_TLS, SIG_FLAG_TOCLIENT, 0,
             DetectEngineInspectBufferGeneric, GetData);
 
@@ -91,8 +105,10 @@ void DetectTlsJa3SStringRegister(void)
     DetectBufferTypeSetDescriptionByName("ja3s.string", "TLS JA3S string");
 
     g_tls_ja3s_str_buffer_id = DetectBufferTypeGetByName("ja3s.string");
+#endif /*  HAVE_JA3 */
 }
 
+#ifdef HAVE_JA3
 /**
  * \brief this function setup the ja3s.string modifier keyword used in the rule
  *
@@ -118,12 +134,12 @@ static int DetectTlsJa3SStringSetup(DetectEngineCtx *de_ctx, Signature *s, const
 
     /* Check if JA3 is disabled */
     if (!RunmodeIsUnittests() && Ja3IsDisabled("rule")) {
-        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_TLS_JA3S_STRING)) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_TLS_JA3S_STRING)) {
             SCLogError("ja3(s) support is not enabled");
         }
         return -2;
     }
-    s->init_data->init_flags |= SIG_FLAG_INIT_JA3;
+    s->init_data->init_flags |= SIG_FLAG_INIT_JA;
 
     return 0;
 }
@@ -150,3 +166,4 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 
     return buffer;
 }
+#endif

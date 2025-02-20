@@ -274,15 +274,38 @@ You can also use the negation (!) before isdataat.
 
 .. image:: payload-keywords/isdataat1.png
 
+absent
+------
+
+The keyword ``absent`` checks that a sticky buffer does not exist.
+It can be used without any argument to match only on absent buffer :
+
+Example of ``absent`` in a rule:
+
+.. container:: example-rule
+
+   alert http any any -> any any (msg:"HTTP request without referer";  :example-rule-emphasis:`http.referer; absent;` sid:1; rev:1;)
+
+
+It can take an argument "or_else" to match on absent buffer or on what comes next such as negated content, for instance :
+
+.. container:: example-rule
+
+   alert http any any -> any any (msg:"HTTP request without referer";  :example-rule-emphasis:`http.referer; absent: or_else;` content: !"abc"; sid:1; rev:1;)
+
+For files (ie ``file.data``), absent means there are no files in the transaction.
+
 bsize
 -----
 
 With the ``bsize`` keyword, you can match on the length of the buffer. This adds
 precision to the content match, previously this could have been done with ``isdataat``.
 
+bsize uses an :ref:`unsigned 64-bit integer <rules-integer-keywords>`.
+
 An optional operator can be specified; if no operator is present, the operator will
 default to '='. When a relational operator is used, e.g., '<', '>' or '<>' (range),
-the bsize value will be compared using the relational operator. Ranges are inclusive.
+the bsize value will be compared using the relational operator. Ranges are exclusive.
 
 If one or more ``content`` keywords precedes ``bsize``, each occurrence of ``content``
 will be inspected and an error will be raised if the content length and the bsize
@@ -325,6 +348,9 @@ Examples of ``bsize`` in a rule:
 
    alert dns any any -> any any (msg:"test bsize rule"; dns.query; content:"middle"; bsize:6<>15; sid:126; rev:1;)
 
+To emphasize how range works: in the example above, a match will occur if
+``bsize`` is greater than 6 and less than 15.
+
 dsize
 -----
 
@@ -335,6 +361,8 @@ not equal 'dsize:!n' less than 'dsize:<n' or greater than 'dsize:>n'
 This may be convenient in detecting buffer overflows.
 
 dsize cannot be used when using app/streamlayer protocol keywords (i.e. http.uri)
+
+dsize uses an :ref:`unsigned 16-bit integer <rules-integer-keywords>`.
 
 Format::
 
@@ -357,6 +385,8 @@ Examples of dsize values:
    alert tcp any any -> any any (msg:"dsize range value"; dsize:8<>20; sid:6; rev:1;)
 
    alert tcp any any -> any any (msg:"dsize not equal value"; dsize:!9; sid:7; rev:1;)
+
+.. _byte_test:
 
 byte_test
 ---------
@@ -682,6 +712,7 @@ the reassembled stream.
 The checksums will be recalculated by Suricata and changed after the
 replace keyword is being used.
 
+.. _pcre:
 
 pcre (Perl Compatible Regular Expressions)
 ------------------------------------------
@@ -826,7 +857,7 @@ Suricata has its own specific pcre modifiers. These are:
 .. _pcre-update-v1-to-v2:
 
 Changes from PCRE1 to PCRE2
-===========================
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The upgrade from PCRE1 to PCRE2 changes the behavior for some
 PCRE expressions.

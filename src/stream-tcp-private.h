@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __STREAM_TCP_PRIVATE_H__
-#define __STREAM_TCP_PRIVATE_H__
+#ifndef SURICATA_STREAM_TCP_PRIVATE_H
+#define SURICATA_STREAM_TCP_PRIVATE_H
 
 #include "util-pool-thread.h"
 #include "util-streaming-buffer.h"
@@ -63,7 +63,7 @@ RB_PROTOTYPE(TCPSACK, StreamTcpSackRecord, rb, TcpSackCompare);
  * used if the session-dump option is enabled.
  */
 typedef struct TcpSegmentPcapHdrStorage_ {
-    struct timeval ts;
+    SCTime_t ts;
     uint32_t pktlen;
     uint32_t alloclen;
     uint8_t *pkt_hdr;
@@ -276,7 +276,7 @@ enum TcpState {
         } else {                                                                                   \
             SCLogDebug("setting event %d on pkt %p (%" PRIu64 ")", (e), p, (p)->pcap_cnt);         \
             ENGINE_SET_EVENT((p), (e));                                                            \
-            p->tcpvars.stream_pkt_flags |= STREAM_PKT_FLAG_EVENTSET;                               \
+            p->l4.vars.tcp.stream_pkt_flags |= STREAM_PKT_FLAG_EVENTSET;                           \
         }                                                                                          \
     }
 
@@ -288,6 +288,8 @@ typedef struct TcpSession_ {
     int8_t data_first_seen_dir;
     /** track all the tcp flags we've seen */
     uint8_t tcp_packet_flags;
+    uint16_t urg_offset_ts;            /**< SEQ offset from accepted OOB urg bytes */
+    uint16_t urg_offset_tc;            /**< SEQ offset from accepted OOB urg bytes */
     /* coccinelle: TcpSession:flags:STREAMTCP_FLAG */
     uint32_t flags;
     uint32_t reassembly_depth; /**< reassembly depth for the stream */
@@ -317,10 +319,10 @@ typedef struct TcpSession_ {
 #define STREAM_PKT_FLAG_DUP_ACK                 BIT_U16(7)
 #define STREAM_PKT_FLAG_DSACK                   BIT_U16(8)
 #define STREAM_PKT_FLAG_ACK_UNSEEN_DATA         BIT_U16(9)
-#define STREAM_PKT_FLAG_TCP_PORT_REUSE          BIT_U16(10)
+#define STREAM_PKT_FLAG_TCP_SESSION_REUSE       BIT_U16(10)
 #define STREAM_PKT_FLAG_TCP_ZERO_WIN_PROBE      BIT_U16(11)
 #define STREAM_PKT_FLAG_TCP_ZERO_WIN_PROBE_ACK  BIT_U16(12)
 
-#define STREAM_PKT_FLAG_SET(p, f) (p)->tcpvars.stream_pkt_flags |= (f)
+#define STREAM_PKT_FLAG_SET(p, f) (p)->l4.vars.tcp.stream_pkt_flags |= (f)
 
-#endif /* __STREAM_TCP_PRIVATE_H__ */
+#endif /* SURICATA_STREAM_TCP_PRIVATE_H */

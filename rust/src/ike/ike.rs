@@ -23,10 +23,13 @@ use self::ipsec_parser::*;
 use crate::applayer;
 use crate::applayer::*;
 use crate::core::{self, *};
+use crate::direction::Direction;
+use crate::flow::Flow;
 use crate::ike::ikev1::{handle_ikev1, IkeV1Header, Ikev1Container};
 use crate::ike::ikev2::{handle_ikev2, Ikev2Container};
 use crate::ike::parser::*;
 use nom7::Err;
+use suricata_sys::sys::AppProto;
 use std;
 use std::collections::HashSet;
 use std::ffi::CString;
@@ -390,8 +393,8 @@ static mut ALPROTO_IKE: AppProto = ALPROTO_UNKNOWN;
 const PARSER_NAME: &[u8] = b"ike\0";
 const PARSER_ALIAS: &[u8] = b"ikev2\0";
 
-export_tx_data_get!(rs_ike_get_tx_data, IKETransaction);
-export_state_data_get!(rs_ike_get_state_data, IKEState);
+export_tx_data_get!(ike_get_tx_data, IKETransaction);
+export_state_data_get!(ike_get_state_data, IKEState);
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_ike_register_parser() {
@@ -420,11 +423,10 @@ pub unsafe extern "C" fn rs_ike_register_parser() {
         localstorage_free: None,
         get_tx_files: None,
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<IKEState, IKETransaction>),
-        get_tx_data: rs_ike_get_tx_data,
-        get_state_data: rs_ike_get_state_data,
+        get_tx_data: ike_get_tx_data,
+        get_state_data: ike_get_state_data,
         apply_tx_config: None,
         flags: 0,
-        truncate: None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };

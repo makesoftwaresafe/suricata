@@ -69,18 +69,18 @@ static TmEcode RespondRejectFunc(ThreadVars *tv, Packet *p, void *data)
         return TM_ECODE_OK;
     }
 
-    if (IS_TUNNEL_PKT(p)) {
+    if (PacketIsTunnel(p)) {
         return TM_ECODE_OK;
     }
 
-    if (PKT_IS_IPV4(p)) {
-        if (PKT_IS_TCP(p)) {
+    if (PacketIsIPv4(p)) {
+        if (PacketIsTCP(p)) {
             (void)RejectSendIPv4TCP(tv, p, data);
         } else {
             (void)RejectSendIPv4ICMP(tv, p, data);
         }
-    } else if (PKT_IS_IPV6(p)) {
-        if (PKT_IS_TCP(p)) {
+    } else if (PacketIsIPv6(p)) {
+        if (PacketIsTCP(p)) {
             (void)RejectSendIPv6TCP(tv, p, data);
         } else {
             (void)RejectSendIPv6ICMP(tv, p, data);

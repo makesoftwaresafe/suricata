@@ -25,22 +25,13 @@
 
 #include "suricata-common.h"
 #include "suricata.h"
-#include "decode.h"
 
 #include "detect.h"
 #include "detect-parse.h"
 
-#include "flow-var.h"
-#include "decode-events.h"
-
-#include "util-debug.h"
-
 #include "detect-ipopts.h"
 #include "util-unittest.h"
-
-#define PARSE_REGEX "\\S[A-z]"
-
-static DetectParseRegex parse_regex;
+#include "util-unittest-helper.h"
 
 static int DetectIpOptsMatch (DetectEngineThreadCtx *, Packet *,
         const Signature *, const SigMatchCtx *);
@@ -64,7 +55,6 @@ void DetectIpOptsRegister (void)
 #ifdef UNITTESTS
     sigmatch_table[DETECT_IPOPTS].RegisterTests = IpOptsRegisterTests;
 #endif
-    DetectSetupParseRegexes(PARSE_REGEX, &parse_regex);
 }
 
 /**
@@ -168,16 +158,14 @@ const char *IpOptsFlagToString(uint16_t flag)
 static int DetectIpOptsMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
+    DEBUG_VALIDATE_BUG_ON(PKT_IS_PSEUDOPKT(p));
+
     const DetectIpOptsData *de = (const DetectIpOptsData *)ctx;
 
-    if (!de || !PKT_IS_IPV4(p) || PKT_IS_PSEUDOPKT(p))
+    if (!de || !PacketIsIPv4(p))
         return 0;
 
-    if (p->ip4vars.opts_set & de->ipopt) {
-        return 1;
-    }
-
-    return 0;
+    return (p->l3.vars.ip4.opts_set & de->ipopt) == de->ipopt;
 }
 
 /**
@@ -191,42 +179,30 @@ static int DetectIpOptsMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
  */
 static DetectIpOptsData *DetectIpOptsParse (const char *rawstr)
 {
+    if (rawstr == NULL || strlen(rawstr) == 0)
+        return NULL;
+
     int i;
-    DetectIpOptsData *de = NULL;
-    int found = 0;
-
-    pcre2_match_data *match = NULL;
-    int ret = DetectParsePcreExec(&parse_regex, &match, rawstr, 0, 0);
-    if (ret < 1) {
-        SCLogError("pcre_exec parse error, ret %" PRId32 ", string %s", ret, rawstr);
-        goto error;
-    }
-
+    bool found = false;
     for(i = 0; ipopts[i].ipopt_name != NULL; i++)  {
         if((strcasecmp(ipopts[i].ipopt_name,rawstr)) == 0) {
-            found = 1;
+            found = true;
             break;
         }
     }
 
-    if(found == 0)
-        goto error;
+    if (!found) {
+        SCLogError("unknown IP option specified \"%s\"", rawstr);
+        return NULL;
+    }
 
-    de = SCMalloc(sizeof(DetectIpOptsData));
+    DetectIpOptsData *de = SCMalloc(sizeof(DetectIpOptsData));
     if (unlikely(de == NULL))
-        goto error;
+        return NULL;
 
     de->ipopt = ipopts[i].code;
 
-    pcre2_match_data_free(match);
     return de;
-
-error:
-    if (match) {
-        pcre2_match_data_free(match);
-    }
-    if (de) SCFree(de);
-    return NULL;
 }
 
 /**
@@ -242,9 +218,7 @@ error:
  */
 static int DetectIpOptsSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawstr)
 {
-    DetectIpOptsData *de = NULL;
-
-    de = DetectIpOptsParse(rawstr);
+    DetectIpOptsData *de = DetectIpOptsParse(rawstr);
     if (de == NULL)
         goto error;
 
@@ -270,8 +244,9 @@ error:
  */
 void DetectIpOptsFree(DetectEngineCtx *de_ctx, void *de_ptr)
 {
-    DetectIpOptsData *de = (DetectIpOptsData *)de_ptr;
-    if(de) SCFree(de);
+    if (de_ptr) {
+        SCFree(de_ptr);
+    }
 }
 
 /*
@@ -320,8 +295,8 @@ static int IpOptsTestParse03 (void)
     memset(&tv, 0, sizeof(ThreadVars));
     memset(&ip4h, 0, sizeof(IPV4Hdr));
 
-    p->ip4h = &ip4h;
-    p->ip4vars.opts_set = IPV4_OPT_FLAG_RR;
+    UTHSetIPV4Hdr(p, &ip4h);
+    p->l3.vars.ip4.opts_set = IPV4_OPT_FLAG_RR;
 
     DetectIpOptsData *de = DetectIpOptsParse("rr");
     FAIL_IF_NULL(de);
@@ -354,8 +329,8 @@ static int IpOptsTestParse04 (void)
     memset(&tv, 0, sizeof(ThreadVars));
     memset(&ip4h, 0, sizeof(IPV4Hdr));
 
-    p->ip4h = &ip4h;
-    p->ip4vars.opts_set = IPV4_OPT_FLAG_RR;
+    UTHSetIPV4Hdr(p, &ip4h);
+    p->l3.vars.ip4.opts_set = IPV4_OPT_FLAG_RR;
 
     DetectIpOptsData *de = DetectIpOptsParse("lsrr");
     FAIL_IF_NULL(de);
@@ -376,6 +351,20 @@ static int IpOptsTestParse04 (void)
 }
 
 /**
+ * \test IpOptsTestParse05 tests the NULL and empty string
+ */
+static int IpOptsTestParse05(void)
+{
+    DetectIpOptsData *de = DetectIpOptsParse("");
+    FAIL_IF_NOT_NULL(de);
+
+    de = DetectIpOptsParse(NULL);
+    FAIL_IF_NOT_NULL(de);
+
+    PASS;
+}
+
+/**
  * \brief this function registers unit tests for IpOpts
  */
 void IpOptsRegisterTests(void)
@@ -384,5 +373,6 @@ void IpOptsRegisterTests(void)
     UtRegisterTest("IpOptsTestParse02", IpOptsTestParse02);
     UtRegisterTest("IpOptsTestParse03", IpOptsTestParse03);
     UtRegisterTest("IpOptsTestParse04", IpOptsTestParse04);
+    UtRegisterTest("IpOptsTestParse05", IpOptsTestParse05);
 }
 #endif /* UNITTESTS */

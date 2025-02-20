@@ -6,6 +6,7 @@ decoder-events.rules \
 dhcp-events.rules \
 dnp3-events.rules \
 dns-events.rules \
+enip-events.rules \
 files.rules \
 ftp-events.rules \
 http-events.rules \
@@ -22,4 +23,5 @@ smb-events.rules \
 smtp-events.rules \
 ssh-events.rules \
 stream-events.rules \
-tls-events.rules
+tls-events.rules \
+websocket-events.rules

@@ -21,13 +21,14 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __THREADVARS_H__
-#define __THREADVARS_H__
+#ifndef SURICATA_THREADVARS_H
+#define SURICATA_THREADVARS_H
 
 #include "tm-queues.h"
 #include "counters.h"
 #include "packet-queue.h"
 #include "util-atomic.h"
+#include "util-storage.h"
 
 struct TmSlot_;
 
@@ -135,6 +136,7 @@ typedef struct ThreadVars_ {
     struct FlowQueue_ *flow_queue;
     bool break_loop;
 
+    Storage storage[];
 } ThreadVars;
 
 /** Thread setup flags: */
@@ -142,4 +144,4 @@ typedef struct ThreadVars_ {
 #define THREAD_SET_PRIORITY     0x02 /** Real time priority */
 #define THREAD_SET_AFFTYPE      0x04 /** Priority and affinity */
 
-#endif /* __THREADVARS_H__ */
+#endif /* SURICATA_THREADVARS_H */

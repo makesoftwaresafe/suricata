@@ -54,12 +54,12 @@ static int g_tls_random_buffer_id = 0;
 
 void DetectTlsRandomTimeRegister(void)
 {
-    sigmatch_table[DETECT_AL_TLS_RANDOM_TIME].name = "tls.random_time";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_TIME].desc = "sticky buffer to match specifically and only "
-                                                     "on the first 4 bytes of a TLS random buffer";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_TIME].url = "/rules/tls-keywords.html#tls-random-time";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_TIME].Setup = DetectTlsRandomTimeSetup;
-    sigmatch_table[DETECT_AL_TLS_RANDOM_TIME].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
+    sigmatch_table[DETECT_TLS_RANDOM_TIME].name = "tls.random_time";
+    sigmatch_table[DETECT_TLS_RANDOM_TIME].desc = "sticky buffer to match specifically and only "
+                                                  "on the first 4 bytes of a TLS random buffer";
+    sigmatch_table[DETECT_TLS_RANDOM_TIME].url = "/rules/tls-keywords.html#tls-random-time";
+    sigmatch_table[DETECT_TLS_RANDOM_TIME].Setup = DetectTlsRandomTimeSetup;
+    sigmatch_table[DETECT_TLS_RANDOM_TIME].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
 
     /* Register engine for Server random */
     DetectAppLayerInspectEngineRegister("tls.random_time", ALPROTO_TLS, SIG_FLAG_TOSERVER, 0,
@@ -80,14 +80,13 @@ void DetectTlsRandomTimeRegister(void)
 
 void DetectTlsRandomBytesRegister(void)
 {
-    sigmatch_table[DETECT_AL_TLS_RANDOM_BYTES].name = "tls.random_bytes";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_BYTES].desc =
+    sigmatch_table[DETECT_TLS_RANDOM_BYTES].name = "tls.random_bytes";
+    sigmatch_table[DETECT_TLS_RANDOM_BYTES].desc =
             "sticky buffer to match specifically and only on the last 28 bytes of a TLS random "
             "buffer";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_BYTES].url = "/rules/tls-keywords.html#tls-random-bytes";
-    sigmatch_table[DETECT_AL_TLS_RANDOM_BYTES].Setup = DetectTlsRandomBytesSetup;
-    sigmatch_table[DETECT_AL_TLS_RANDOM_BYTES].flags |=
-            SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
+    sigmatch_table[DETECT_TLS_RANDOM_BYTES].url = "/rules/tls-keywords.html#tls-random-bytes";
+    sigmatch_table[DETECT_TLS_RANDOM_BYTES].Setup = DetectTlsRandomBytesSetup;
+    sigmatch_table[DETECT_TLS_RANDOM_BYTES].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
 
     /* Register engine for Server random */
     DetectAppLayerInspectEngineRegister("tls.random_bytes", ALPROTO_TLS, SIG_FLAG_TOSERVER, 0,
@@ -114,12 +113,12 @@ void DetectTlsRandomRegister(void)
     DetectTlsRandomTimeRegister();
     DetectTlsRandomBytesRegister();
 
-    sigmatch_table[DETECT_AL_TLS_RANDOM].name = "tls.random";
-    sigmatch_table[DETECT_AL_TLS_RANDOM].desc =
+    sigmatch_table[DETECT_TLS_RANDOM].name = "tls.random";
+    sigmatch_table[DETECT_TLS_RANDOM].desc =
             "sticky buffer to match specifically and only on a TLS random buffer";
-    sigmatch_table[DETECT_AL_TLS_RANDOM].url = "/rules/tls-keywords.html#tls-random";
-    sigmatch_table[DETECT_AL_TLS_RANDOM].Setup = DetectTlsRandomSetup;
-    sigmatch_table[DETECT_AL_TLS_RANDOM].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
+    sigmatch_table[DETECT_TLS_RANDOM].url = "/rules/tls-keywords.html#tls-random";
+    sigmatch_table[DETECT_TLS_RANDOM].Setup = DetectTlsRandomSetup;
+    sigmatch_table[DETECT_TLS_RANDOM].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_STICKY_BUFFER;
 
     /* Register engine for Server random */
     DetectAppLayerInspectEngineRegister("tls.random", ALPROTO_TLS, SIG_FLAG_TOSERVER, 0,
@@ -218,9 +217,9 @@ static InspectionBuffer *GetRandomTimeData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = DETECT_TLS_RANDOM_TIME_LEN;
         const uint8_t *data;
         if (flow_flags & STREAM_TOSERVER) {
-            data = ssl_state->server_connp.random;
-        } else {
             data = ssl_state->client_connp.random;
+        } else {
+            data = ssl_state->server_connp.random;
         }
         InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
@@ -245,9 +244,9 @@ static InspectionBuffer *GetRandomBytesData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = DETECT_TLS_RANDOM_BYTES_LEN;
         const uint8_t *data;
         if (flow_flags & STREAM_TOSERVER) {
-            data = ssl_state->server_connp.random + DETECT_TLS_RANDOM_TIME_LEN;
-        } else {
             data = ssl_state->client_connp.random + DETECT_TLS_RANDOM_TIME_LEN;
+        } else {
+            data = ssl_state->server_connp.random + DETECT_TLS_RANDOM_TIME_LEN;
         }
         InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);
@@ -272,9 +271,9 @@ static InspectionBuffer *GetRandomData(DetectEngineThreadCtx *det_ctx,
         const uint32_t data_len = TLS_RANDOM_LEN;
         const uint8_t *data;
         if (flow_flags & STREAM_TOSERVER) {
-            data = ssl_state->server_connp.random;
-        } else {
             data = ssl_state->client_connp.random;
+        } else {
+            data = ssl_state->server_connp.random;
         }
         InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);

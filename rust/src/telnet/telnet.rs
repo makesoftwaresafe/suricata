@@ -16,11 +16,13 @@
  */
 
 use std;
-use crate::core::{ALPROTO_UNKNOWN, AppProto, Flow, IPPROTO_TCP};
+use crate::core::{ALPROTO_UNKNOWN, IPPROTO_TCP};
 use crate::applayer::{self, *};
+use crate::flow::Flow;
 use crate::frames::*;
 use std::ffi::CString;
 use nom7::IResult;
+use suricata_sys::sys::AppProto;
 use super::parser;
 
 static mut ALPROTO_TELNET: AppProto = ALPROTO_UNKNOWN;
@@ -164,6 +166,7 @@ impl TelnetState {
                     start,
                     -1_i64,
                     TelnetFrameType::Pdu as u8,
+                    None,
                 );
             }
             if self.request_specific_frame.is_none() {
@@ -175,6 +178,7 @@ impl TelnetState {
                             start,
                             -1_i64,
                             TelnetFrameType::Ctl as u8,
+                            None,
                         )
                     } else {
                         Frame::new(
@@ -183,6 +187,7 @@ impl TelnetState {
                             start,
                             -1_i64,
                             TelnetFrameType::Data as u8,
+                            None,
                         )
                     // app-layer-frame-documentation tag end: parse_request
                     };
@@ -266,14 +271,14 @@ impl TelnetState {
         let mut start = input;
         while !start.is_empty() {
             if self.response_frame.is_none() {
-                self.response_frame = Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Pdu as u8);
+                self.response_frame = Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Pdu as u8, None);
             }
             if self.response_specific_frame.is_none() {
                 if let Ok((_, is_ctl)) = parser::peek_message_is_ctl(start) {
                     self.response_specific_frame = if is_ctl {
-                        Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Ctl as u8)
+                        Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Ctl as u8, None)
                     } else {
-                        Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Data as u8)
+                        Frame::new(flow, stream_slice, start, -1_i64, TelnetFrameType::Data as u8, None)
                     };
                 }
             }
@@ -497,8 +502,8 @@ pub unsafe extern "C" fn rs_telnet_tx_get_alstate_progress(
     return 0;
 }
 
-export_tx_data_get!(rs_telnet_get_tx_data, TelnetTransaction);
-export_state_data_get!(rs_telnet_get_state_data, TelnetState);
+export_tx_data_get!(telnet_get_tx_data, TelnetTransaction);
+export_state_data_get!(telnet_get_state_data, TelnetState);
 
 // Parser name as a C style string.
 const PARSER_NAME: &[u8] = b"telnet\0";
@@ -530,11 +535,10 @@ pub unsafe extern "C" fn rs_telnet_register_parser() {
         localstorage_free: None,
         get_tx_files: None,
         get_tx_iterator: Some(applayer::state_get_tx_iterator::<TelnetState, TelnetTransaction>),
-        get_tx_data: rs_telnet_get_tx_data,
-        get_state_data: rs_telnet_get_state_data,
+        get_tx_data: telnet_get_tx_data,
+        get_state_data: telnet_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
-        truncate: None,
         get_frame_id_by_name: Some(TelnetFrameType::ffi_id_from_name),
         get_frame_name_by_id: Some(TelnetFrameType::ffi_name_from_id),
 

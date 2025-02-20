@@ -21,8 +21,8 @@
  * \author Sascha Steinbiss <sascha.steinbiss@dcso.de>
  */
 
-#ifndef __UTIL_MACSET_H__
-#define __UTIL_MACSET_H__
+#ifndef SURICATA_UTIL_MACSET_H
+#define SURICATA_UTIL_MACSET_H
 
 typedef struct MacSet_ MacSet;
 typedef enum {
@@ -33,9 +33,9 @@ typedef enum {
 typedef int (*MacSetIteratorFunc)(uint8_t *addr, MacSetSide side, void*);
 
 MacSet *MacSetInit(int size);
-void    MacSetAdd(MacSet*, uint8_t *src_addr, uint8_t *dst_addr);
-void    MacSetAddWithCtr(MacSet*, uint8_t *src_addr, uint8_t *dst_addr, ThreadVars *tv,
-                         uint16_t ctr_src, uint16_t ctr_dst);
+void MacSetAdd(MacSet *, const uint8_t *src_addr, const uint8_t *dst_addr);
+void MacSetAddWithCtr(MacSet *, const uint8_t *src_addr, const uint8_t *dst_addr, ThreadVars *tv,
+        uint16_t ctr_src, uint16_t ctr_dst);
 int     MacSetForEach(const MacSet*, MacSetIteratorFunc, void*);
 int     MacSetSize(const MacSet*);
 void    MacSetReset(MacSet*);
@@ -45,4 +45,4 @@ FlowStorageId MacSetGetFlowStorageID(void);
 bool    MacSetFlowStorageEnabled(void);
 void    MacSetRegisterTests(void);
 
-#endif /* __UTIL_MACSET_H__ */
+#endif /* SURICATA_UTIL_MACSET_H */

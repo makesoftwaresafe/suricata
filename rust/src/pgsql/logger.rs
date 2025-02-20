@@ -27,20 +27,22 @@ use std;
 pub const PGSQL_LOG_PASSWORDS: u32 = BIT_U32!(0);
 
 fn log_pgsql(tx: &PgsqlTransaction, flags: u32, js: &mut JsonBuilder) -> Result<(), JsonError> {
+    js.open_object("pgsql")?;
     js.set_uint("tx_id", tx.tx_id)?;
     if let Some(request) = &tx.request {
         js.set_object("request", &log_request(request, flags)?)?;
     } else if tx.responses.is_empty() {
         SCLogDebug!("Suricata created an empty PGSQL transaction");
-        // TODO Log anomaly event instead?
-        js.set_bool("request", false)?;
-        js.set_bool("response", false)?;
+        // TODO Log anomaly event?
+        // if there are no transactions, there's nothing more to be logged
+        js.close()?;
         return Ok(());
     }
 
     if !tx.responses.is_empty() {
         js.set_object("response", &log_response_object(tx)?)?;
     }
+    js.close()?;
 
     Ok(())
 }
@@ -94,13 +96,10 @@ fn log_request(req: &PgsqlFEMessage, flags: u32) -> Result<JsonBuilder, JsonErro
         }) => {
             js.set_string_from_bytes(req.to_str(), payload)?;
         }
-        PgsqlFEMessage::CancelRequest(CancelRequestMessage {
-            pid,
-            backend_key,
-        }) => {
+        PgsqlFEMessage::CancelRequest(CancelRequestMessage { pid, backend_key }) => {
             js.set_string("message", "cancel_request")?;
-            js.set_uint("process_id", (*pid).into())?;
-            js.set_uint("secret_key", (*backend_key).into())?;
+            js.set_uint("process_id", *pid)?;
+            js.set_uint("secret_key", *backend_key)?;
         }
         PgsqlFEMessage::Terminate(TerminationMessage {
             identifier: _,
@@ -214,8 +213,8 @@ fn log_response(res: &PgsqlBEMessage, jb: &mut JsonBuilder) -> Result<(), JsonEr
             backend_pid,
             secret_key,
         }) => {
-            jb.set_uint("process_id", (*backend_pid).into())?;
-            jb.set_uint("secret_key", (*secret_key).into())?;
+            jb.set_uint("process_id", *backend_pid)?;
+            jb.set_uint("secret_key", *secret_key)?;
         }
         PgsqlBEMessage::ReadyForQuery(ReadyForQueryMessage {
             identifier: _,
@@ -230,7 +229,7 @@ fn log_response(res: &PgsqlBEMessage, jb: &mut JsonBuilder) -> Result<(), JsonEr
             field_count,
             fields: _,
         }) => {
-            jb.set_uint("field_count", (*field_count).into())?;
+            jb.set_uint("field_count", *field_count)?;
         }
         PgsqlBEMessage::ConsolidatedDataRow(ConsolidatedDataRowPacket {
             identifier: _,
@@ -247,7 +246,7 @@ fn log_response(res: &PgsqlBEMessage, jb: &mut JsonBuilder) -> Result<(), JsonEr
             channel_name,
             payload,
         }) => {
-            jb.set_uint("pid", (*pid).into())?;
+            jb.set_uint("pid", *pid)?;
             jb.set_string_from_bytes("channel_name", channel_name)?;
             jb.set_string_from_bytes("payload", payload)?;
         }
@@ -288,7 +287,7 @@ fn log_pgsql_param(param: &PgsqlParameter) -> Result<JsonBuilder, JsonError> {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_pgsql_logger(
+pub unsafe extern "C" fn SCPgsqlLogger(
     tx: *mut std::os::raw::c_void, flags: u32, js: &mut JsonBuilder,
 ) -> bool {
     let tx_pgsql = cast_pointer!(tx, PgsqlTransaction);

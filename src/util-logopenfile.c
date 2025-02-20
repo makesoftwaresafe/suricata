@@ -50,7 +50,7 @@ static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, 
         ThreadLogFileHashEntry *entry);
 
 // Threaded eve.json identifier
-static SC_ATOMIC_DECL_AND_INIT_WITH_VAL(uint32_t, eve_file_id, 1);
+static SC_ATOMIC_DECL_AND_INIT_WITH_VAL(uint16_t, eve_file_id, 1);
 
 #ifdef BUILD_WITH_UNIXSOCKET
 /** \brief connect to the indicated local stream socket, logging any errors
@@ -346,14 +346,17 @@ static void ThreadLogFileHashFreeFunc(void *data)
     BUG_ON(data == NULL);
     ThreadLogFileHashEntry *thread_ent = (ThreadLogFileHashEntry *)data;
 
-    if (thread_ent) {
+    if (!thread_ent)
+        return;
+
+    if (thread_ent->isopen) {
         LogFileCtx *lf_ctx = thread_ent->ctx;
         /* Free the leaf log file entries */
         if (!lf_ctx->threaded) {
             LogFileFreeCtx(lf_ctx);
         }
-        SCFree(thread_ent);
     }
+    SCFree(thread_ent);
 }
 
 bool SCLogOpenThreadedFile(const char *log_path, const char *append, LogFileCtx *parent_ctx)
@@ -608,7 +611,7 @@ SCConfLogOpenGeneric(ConfNode *conf,
 
 #ifdef BUILD_WITH_UNIXSOCKET
     /* If a socket and running live, do non-blocking writes. */
-    if (log_ctx->is_sock && !IsRunModeOffline(RunmodeGetCurrent())) {
+    if (log_ctx->is_sock && !IsRunModeOffline(SCRunmodeGet())) {
         SCLogInfo("Setting logging socket of non-blocking in live mode.");
         log_ctx->send_flags |= MSG_DONTWAIT;
     }
@@ -677,7 +680,7 @@ LogFileCtx *LogFileNewCtx(void)
  * Each thread -- identified by its operating system thread-id -- has its
  * own file entry that includes a file pointer.
  */
-static ThreadLogFileHashEntry *LogFileThread2Slot(LogThreadedFileCtx *parent)
+static ThreadLogFileHashEntry *LogFileThread2Slot(LogThreadedFileCtx *parent, ThreadId thread_id)
 {
     ThreadLogFileHashEntry thread_hash_entry;
 
@@ -689,12 +692,14 @@ static ThreadLogFileHashEntry *LogFileThread2Slot(LogThreadedFileCtx *parent)
     if (!ent) {
         ent = SCCalloc(1, sizeof(*ent));
         if (!ent) {
-            FatalError("Unable to allocate thread/entry entry");
+            FatalError("Unable to allocate thread/hash-entry entry");
         }
         ent->thread_id = thread_hash_entry.thread_id;
-        SCLogDebug("Trying to add thread %ld to entry %d", ent->thread_id, ent->slot_number);
+        ent->internal_thread_id = thread_id;
+        SCLogDebug(
+                "Trying to add thread %" PRIi64 " to entry %d", ent->thread_id, ent->slot_number);
         if (0 != HashTableAdd(parent->ht, ent, 0)) {
-            FatalError("Unable to add thread/entry mapping");
+            FatalError("Unable to add thread/hash-entry mapping");
         }
     }
     return ent;
@@ -704,31 +709,36 @@ static ThreadLogFileHashEntry *LogFileThread2Slot(LogThreadedFileCtx *parent)
  * \param parent_ctx
  * \retval LogFileCtx * pointer if successful; NULL otherwise
  */
-LogFileCtx *LogFileEnsureExists(LogFileCtx *parent_ctx)
+LogFileCtx *LogFileEnsureExists(ThreadId thread_id, LogFileCtx *parent_ctx)
 {
     /* threaded output disabled */
     if (!parent_ctx->threaded)
         return parent_ctx;
 
+    LogFileCtx *ret_ctx = NULL;
     SCMutexLock(&parent_ctx->threads->mutex);
     /* Find this thread's entry */
-    ThreadLogFileHashEntry *entry = LogFileThread2Slot(parent_ctx->threads);
-    SCLogDebug("Adding reference for thread %ld [slot %d] to file %s [ctx %p]", SCGetThreadIdLong(),
-            entry->slot_number, parent_ctx->filename, parent_ctx);
+    ThreadLogFileHashEntry *entry = LogFileThread2Slot(parent_ctx->threads, thread_id);
+    SCLogDebug("%s: Adding reference for thread %" PRIi64
+               " (local thread id %d) to file %s [ctx %p]",
+            t_thread_name, SCGetThreadIdLong(), thread_id, parent_ctx->filename, parent_ctx);
 
     bool new = entry->isopen;
     /* has it been opened yet? */
-    if (!entry->isopen) {
-        SCLogDebug("Opening new file for thread/slot %d to file %s [ctx %p]", entry->slot_number,
-                parent_ctx->filename, parent_ctx);
+    if (!new) {
+        SCLogDebug("%s: Opening new file for thread/id %d to file %s [ctx %p]", t_thread_name,
+                thread_id, parent_ctx->filename, parent_ctx);
         if (LogFileNewThreadedCtx(
                     parent_ctx, parent_ctx->filename, parent_ctx->threads->append, entry)) {
             entry->isopen = true;
+            ret_ctx = entry->ctx;
         } else {
-            SCLogError(
+            SCLogDebug(
                     "Unable to open slot %d for file %s", entry->slot_number, parent_ctx->filename);
             (void)HashTableRemove(parent_ctx->threads->ht, entry, 0);
         }
+    } else {
+        ret_ctx = entry->ctx;
     }
     SCMutexUnlock(&parent_ctx->threads->mutex);
 
@@ -739,7 +749,7 @@ LogFileCtx *LogFileEnsureExists(LogFileCtx *parent_ctx)
         }
     }
 
-    return entry->ctx;
+    return ret_ctx;
 }
 
 /** \brief LogFileThreadedName() Create file name for threaded EVE storage
@@ -810,11 +820,13 @@ static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, 
     *thread = *parent_ctx;
     if (parent_ctx->type == LOGFILE_TYPE_FILE) {
         char fname[LOGFILE_NAME_MAX];
-        if (!LogFileThreadedName(log_path, fname, sizeof(fname), SC_ATOMIC_ADD(eve_file_id, 1))) {
+        entry->slot_number = SC_ATOMIC_ADD(eve_file_id, 1);
+        if (!LogFileThreadedName(log_path, fname, sizeof(fname), entry->slot_number)) {
             SCLogError("Unable to create threaded filename for log");
             goto error;
         }
-        SCLogDebug("Thread open -- using name %s [replaces %s]", fname, log_path);
+        SCLogDebug("%s: thread open -- using name %s [replaces %s] - thread %d [slot %d]",
+                t_thread_name, fname, log_path, entry->internal_thread_id, entry->slot_number);
         thread->fp = SCLogOpenFileFp(fname, append, thread->filemode);
         if (thread->fp == NULL) {
             goto error;
@@ -828,10 +840,12 @@ static bool LogFileNewThreadedCtx(LogFileCtx *parent_ctx, const char *log_path, 
         thread->Write = SCLogFileWriteNoLock;
         thread->Close = SCLogFileCloseNoLock;
         OutputRegisterFileRotationFlag(&thread->rotation_flag);
-    } else if (parent_ctx->type == LOGFILE_TYPE_PLUGIN) {
+    } else if (parent_ctx->type == LOGFILE_TYPE_FILETYPE) {
         entry->slot_number = SC_ATOMIC_ADD(eve_file_id, 1);
-        thread->plugin.plugin->ThreadInit(
-                thread->plugin.init_data, entry->slot_number, &thread->plugin.thread_data);
+        SCLogDebug("%s - thread %d [slot %d]", log_path, entry->internal_thread_id,
+                entry->slot_number);
+        thread->filetype.filetype->ThreadInit(thread->filetype.init_data, entry->internal_thread_id,
+                &thread->filetype.thread_data);
     }
     thread->threaded = false;
     thread->parent = parent_ctx;
@@ -864,8 +878,9 @@ int LogFileFreeCtx(LogFileCtx *lf_ctx)
         SCReturnInt(0);
     }
 
-    if (lf_ctx->type == LOGFILE_TYPE_PLUGIN && lf_ctx->parent != NULL) {
-        lf_ctx->plugin.plugin->ThreadDeinit(lf_ctx->plugin.init_data, lf_ctx->plugin.thread_data);
+    if (lf_ctx->type == LOGFILE_TYPE_FILETYPE && lf_ctx->filetype.filetype->ThreadDeinit) {
+        lf_ctx->filetype.filetype->ThreadDeinit(
+                lf_ctx->filetype.init_data, lf_ctx->filetype.thread_data);
     }
 
     if (lf_ctx->threaded) {
@@ -878,7 +893,7 @@ int LogFileFreeCtx(LogFileCtx *lf_ctx)
         }
         SCFree(lf_ctx->threads);
     } else {
-        if (lf_ctx->type != LOGFILE_TYPE_PLUGIN) {
+        if (lf_ctx->type != LOGFILE_TYPE_FILETYPE) {
             if (lf_ctx->fp != NULL) {
                 lf_ctx->Close(lf_ctx);
             }
@@ -901,12 +916,20 @@ int LogFileFreeCtx(LogFileCtx *lf_ctx)
         OutputUnregisterFileRotationFlag(&lf_ctx->rotation_flag);
     }
 
-    /* Deinitialize output plugins. We only want to call this for the
-     * parent of threaded output, or always for non-threaded
+    /* Deinitialize output filetypes. We only want to call this for
+     * the parent of threaded output, or always for non-threaded
      * output. */
-    if (lf_ctx->type == LOGFILE_TYPE_PLUGIN && lf_ctx->parent == NULL) {
-        lf_ctx->plugin.plugin->Deinit(lf_ctx->plugin.init_data);
+    if (lf_ctx->type == LOGFILE_TYPE_FILETYPE && lf_ctx->parent == NULL) {
+        lf_ctx->filetype.filetype->Deinit(lf_ctx->filetype.init_data);
     }
+
+#ifdef HAVE_LIBHIREDIS
+    if (lf_ctx->type == LOGFILE_TYPE_REDIS) {
+        if (lf_ctx->redis_setup.stream_format != NULL) {
+            SCFree(lf_ctx->redis_setup.stream_format);
+        }
+    }
+#endif
 
     memset(lf_ctx, 0, sizeof(*lf_ctx));
     SCFree(lf_ctx);
@@ -922,9 +945,10 @@ int LogFileWrite(LogFileCtx *file_ctx, MemBuffer *buffer)
         MemBufferWriteString(buffer, "\n");
         file_ctx->Write((const char *)MEMBUFFER_BUFFER(buffer),
                         MEMBUFFER_OFFSET(buffer), file_ctx);
-    } else if (file_ctx->type == LOGFILE_TYPE_PLUGIN) {
-        file_ctx->plugin.plugin->Write((const char *)MEMBUFFER_BUFFER(buffer),
-                MEMBUFFER_OFFSET(buffer), file_ctx->plugin.init_data, file_ctx->plugin.thread_data);
+    } else if (file_ctx->type == LOGFILE_TYPE_FILETYPE) {
+        file_ctx->filetype.filetype->Write((const char *)MEMBUFFER_BUFFER(buffer),
+                MEMBUFFER_OFFSET(buffer), file_ctx->filetype.init_data,
+                file_ctx->filetype.thread_data);
     }
 #ifdef HAVE_LIBHIREDIS
     else if (file_ctx->type == LOGFILE_TYPE_REDIS) {

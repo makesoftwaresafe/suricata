@@ -47,7 +47,7 @@ static int JsonDCERPCLogger(ThreadVars *tv, void *thread_data,
     jb_close(jb);
 
     MemBufferReset(thread->buffer);
-    OutputJsonBuilderBuffer(jb, thread);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, thread);
 
     jb_free(jb);
     return TM_ECODE_OK;
@@ -69,7 +69,7 @@ void JsonDCERPCLogRegister(void)
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonDCERPCLog", "eve-log.dcerpc",
             DCERPCLogInitSub, ALPROTO_DCERPC, JsonDCERPCLogger, JsonLogThreadInit,
-            JsonLogThreadDeinit, NULL);
+            JsonLogThreadDeinit);
 
     SCLogDebug("DCERPC JSON logger registered.");
 }

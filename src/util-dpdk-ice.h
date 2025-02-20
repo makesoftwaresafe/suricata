@@ -1,4 +1,4 @@
-/* Copyright (C) 2021 Open Information Security Foundation
+/* Copyright (C) 2021-2025 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -28,7 +28,10 @@
 
 #ifdef HAVE_DPDK
 
-void iceDeviceSetRSSHashFunction(uint64_t *rss_conf);
+#include "util-dpdk.h"
+
+int iceDeviceSetRSS(int port_id, int nb_rx_queues, char *port_name);
+void iceDeviceSetRSSConf(struct rte_eth_rss_conf *rss_conf);
 
 #endif /* HAVE_DPDK */
 

@@ -22,8 +22,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_PROFILE_H__
-#define __UTIL_PROFILE_H__
+#ifndef SURICATA_UTIL_PROFILE_H
+#define SURICATA_UTIL_PROFILE_H
 
 #include "util-cpu.h"
 
@@ -170,13 +170,12 @@ PktProfiling *SCProfilePacketStart(void);
         (dp)->alproto = (id);                                       \
     }
 
-#define PACKET_PROFILING_APP_END(dp, id)                            \
-    if (profiling_packets_enabled) {                                \
-        BUG_ON((id) != (dp)->alproto);                              \
-        (dp)->ticks_end = UtilCpuGetTicks();                        \
-        if ((dp)->ticks_start != 0 && (dp)->ticks_start < ((dp)->ticks_end)) {  \
-            (dp)->ticks_spent = ((dp)->ticks_end - (dp)->ticks_start);  \
-        }                                                           \
+#define PACKET_PROFILING_APP_END(dp)                                                               \
+    if (profiling_packets_enabled) {                                                               \
+        (dp)->ticks_end = UtilCpuGetTicks();                                                       \
+        if ((dp)->ticks_start != 0 && (dp)->ticks_start < ((dp)->ticks_end)) {                     \
+            (dp)->ticks_spent = ((dp)->ticks_end - (dp)->ticks_start);                             \
+        }                                                                                          \
     }
 
 #define PACKET_PROFILING_APP_PD_START(dp)                           \
@@ -204,12 +203,12 @@ PktProfiling *SCProfilePacketStart(void);
         (dp)->proto_detect_ticks_spent = 0;                         \
     }
 
-#define PACKET_PROFILING_APP_STORE(dp, p)                           \
-    if (profiling_packets_enabled && (p)->profile != NULL) {        \
-        if ((dp)->alproto < ALPROTO_MAX) {                          \
-            (p)->profile->app[(dp)->alproto].ticks_spent += (dp)->ticks_spent;   \
-            (p)->profile->proto_detect += (dp)->proto_detect_ticks_spent;        \
-        }                                                           \
+#define PACKET_PROFILING_APP_STORE(dp, p)                                                          \
+    if (profiling_packets_enabled && (p)->profile != NULL) {                                       \
+        if ((dp)->alproto < g_alproto_max) {                                                       \
+            (p)->profile->app[(dp)->alproto].ticks_spent += (dp)->ticks_spent;                     \
+            (p)->profile->proto_detect += (dp)->proto_detect_ticks_spent;                          \
+        }                                                                                          \
     }
 
 #define PACKET_PROFILING_DETECT_START(p, id)                        \
@@ -288,14 +287,6 @@ extern thread_local int profiling_prefilter_entered;
     (det_ctx)->prefilter_bytes += (bytes);                                                         \
     (det_ctx)->prefilter_bytes_called++
 
-struct SCProfileDetectCtx_;
-void SCProfilingRulesGlobalInit(void);
-void SCProfilingRuleDestroyCtx(struct SCProfileDetectCtx_ *);
-void SCProfilingRuleInitCounters(DetectEngineCtx *);
-void SCProfilingRuleUpdateCounter(DetectEngineThreadCtx *, uint16_t, uint64_t, int);
-void SCProfilingRuleThreadSetup(struct SCProfileDetectCtx_ *, DetectEngineThreadCtx *);
-void SCProfilingRuleThreadCleanup(DetectEngineThreadCtx *);
-
 void SCProfilingKeywordsGlobalInit(void);
 void SCProfilingKeywordDestroyCtx(DetectEngineCtx *);//struct SCProfileKeywordDetectCtx_ *);
 void SCProfilingKeywordInitCounters(DetectEngineCtx *);
@@ -340,7 +331,7 @@ void SCProfilingDump(void);
 #define PACKET_PROFILING_RESET(p)
 
 #define PACKET_PROFILING_APP_START(dp, id)
-#define PACKET_PROFILING_APP_END(dp, id)
+#define PACKET_PROFILING_APP_END(d)
 #define PACKET_PROFILING_APP_RESET(dp)
 #define PACKET_PROFILING_APP_STORE(dp, p)
 
@@ -417,7 +408,7 @@ void SCProfilingRuleThreatAggregate(DetectEngineThreadCtx *det_ctx);
     }
 
 #define RULE_PROFILING_END(ctx, r, m, p)                                                           \
-    if (profiling_rules_enabled && ((p)->flags & PKT_PROFILE)) {                                   \
+    if (profiling_rules_enabled && profiling_rules_entered) {                                      \
         profile_rule_end_ = UtilCpuGetTicks();                                                     \
         SCProfilingRuleUpdateCounter(                                                              \
                 ctx, r->profiling_id, profile_rule_end_ - profile_rule_start_, m);                 \
@@ -432,4 +423,4 @@ void SCProfilingRuleThreatAggregate(DetectEngineThreadCtx *det_ctx);
 
 #endif /* PROFILE_RULES */
 
-#endif /* ! __UTIL_PROFILE_H__ */
+#endif /* ! SURICATA_UTIL_PROFILE_H */

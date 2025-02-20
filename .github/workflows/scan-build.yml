@@ -8,14 +8,20 @@ on:
     paths-ignore:
       - "doc/**"
 
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan-build:
     name: Scan-build
     runs-on: ubuntu-latest
-    container: ubuntu:23.04
+    container: ubuntu:24.04
     steps:
       - name: Cache scan-build
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo
           key: scan-build
@@ -30,8 +36,8 @@ jobs:
                 automake \
                 cargo \
                 cbindgen \
-                clang-16 \
-                clang-tools-16 \
+                clang-18 \
+                clang-tools-18 \
                 dpdk-dev \
                 git \
                 libtool \
@@ -50,30 +56,29 @@ jobs:
                 libnuma-dev \
                 libhiredis-dev \
                 libhyperscan-dev \
-                liblua5.1-dev \
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 liblz4-dev \
-                llvm-16-dev \
+                llvm-18-dev \
                 make \
                 python3-yaml \
                 rustc \
                 software-properties-common \
                 zlib1g \
                 zlib1g-dev
-      - uses: actions/checkout@v3.5.3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - run: git config --global --add safe.directory /__w/suricata/suricata
       - run: ./scripts/bundle.sh
       - run: ./autogen.sh
-      - run: scan-build-16 ./configure --enable-dpdk --enable-nfqueue --enable-nflog
+      - run: scan-build-18 ./configure --enable-warnings --enable-dpdk --enable-nfqueue --enable-nflog
         env:
-          CC: clang-16
+          CC: clang-18
       # exclude libhtp from the analysis
       # disable security.insecureAPI.DeprecatedOrUnsafeBufferHandling explicitly as
       # this will require significant effort to address.
       - run: |
-          scan-build-16 --status-bugs --exclude libhtp/ \
+          scan-build-18 --status-bugs --exclude libhtp/ --exclude rust \
                 -enable-checker valist.Uninitialized \
                 -enable-checker valist.CopyToSelf \
                 -enable-checker valist.Unterminated \
@@ -95,4 +100,4 @@ jobs:
                 \
                 make
         env:
-          CC: clang-16
+          CC: clang-18

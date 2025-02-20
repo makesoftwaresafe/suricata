@@ -95,11 +95,6 @@ uint64_t IPPairGetMemuse(void)
     return memusecopy;
 }
 
-uint32_t IPPairSpareQueueGetSize(void)
-{
-    return IPPairQueueLen(&ippair_spare_q);
-}
-
 void IPPairMoveToSpare(IPPair *h)
 {
     IPPairEnqueue(&ippair_spare_q, h);
@@ -279,8 +274,6 @@ void IPPairInitConfig(bool quiet)
         SCLogConfig("ippair memory usage: %"PRIu64" bytes, maximum: %"PRIu64,
                 SC_ATOMIC_GET(ippair_memuse), SC_ATOMIC_GET(ippair_config.memcap));
     }
-
-    return;
 }
 
 /** \brief print some ippair stats
@@ -291,9 +284,8 @@ void IPPairPrintStats (void)
     SCLogPerf("ippairbits added: %" PRIu32 ", removed: %" PRIu32 ", max memory usage: %" PRIu32 "",
         ippairbits_added, ippairbits_removed, ippairbits_memuse_max);
 #endif /* IPPAIRBITS_STATS */
-    SCLogPerf("ippair memory usage: %"PRIu64" bytes, maximum: %"PRIu64,
+    SCLogPerf("ippair memory usage: %" PRIu64 " bytes, maximum: %" PRIu64,
             SC_ATOMIC_GET(ippair_memuse), SC_ATOMIC_GET(ippair_config.memcap));
-    return;
 }
 
 /** \brief shutdown the flow engine
@@ -328,7 +320,6 @@ void IPPairShutdown(void)
     }
     (void) SC_ATOMIC_SUB(ippair_memuse, ippair_config.hash_size * sizeof(IPPairHashRow));
     IPPairQueueDestroy(&ippair_spare_q);
-    return;
 }
 
 /** \brief Cleanup the ippair engine
@@ -369,8 +360,6 @@ void IPPairCleanup(void)
             HRLOCK_UNLOCK(hb);
         }
     }
-
-    return;
 }
 
 /** \brief compare two raw ipv6 addrs
@@ -517,11 +506,6 @@ void IPPairRelease(IPPair *h)
 {
     (void) IPPairDecrUsecnt(h);
     SCMutexUnlock(&h->m);
-}
-
-void IPPairLock(IPPair *h)
-{
-    SCMutexLock(&h->m);
 }
 
 void IPPairUnlock(IPPair *h)

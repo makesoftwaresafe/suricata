@@ -25,20 +25,13 @@
 #include "suricata-common.h"
 #include "output-lua.h"
 
-#ifdef HAVE_LUA
-#include "util-print.h"
-#include "util-unittest.h"
+#include "util-lua-builtins.h"
 #include "util-debug.h"
 #include "output.h"
 #include "app-layer-htp.h"
-#include "app-layer.h"
 #include "app-layer-ssl.h"
 #include "app-layer-ssh.h"
 #include "app-layer-parser.h"
-#include "util-privs.h"
-#include "util-buffer.h"
-#include "util-proto-name.h"
-#include "util-logopenfile.h"
 #include "util-time.h"
 #include "util-lua.h"
 #include "util-lua-common.h"
@@ -58,7 +51,14 @@
  *  it's parent_ctx->data ptr.
  */
 typedef struct LogLuaMasterCtx_ {
-    char path[PATH_MAX]; /**< contains script-dir */
+    /** \brief Path to script directory. */
+    char script_dir[PATH_MAX];
+
+    /** \brief Lua search path for Lua modules. */
+    char path[PATH_MAX];
+
+    /** \brief Lua search path for C modules. */
+    char cpath[PATH_MAX];
 } LogLuaMasterCtx;
 
 typedef struct LogLuaCtx_ {
@@ -175,7 +175,7 @@ static int LuaPacketLoggerAlerts(ThreadVars *tv, void *thread_data, const Packet
     char timebuf[64];
     CreateTimeString(p->ts, timebuf, sizeof(timebuf));
 
-    if (!(PKT_IS_IPV4(p)) && !(PKT_IS_IPV6(p))) {
+    if (!(PacketIsIPv4(p)) && !(PacketIsIPv6(p))) {
         /* decoder event */
         goto not_supported;
     }
@@ -237,7 +237,7 @@ static int LuaPacketLogger(ThreadVars *tv, void *thread_data, const Packet *p)
 
     char timebuf[64];
 
-    if ((!(PKT_IS_IPV4(p))) && (!(PKT_IS_IPV6(p)))) {
+    if ((!(PacketIsIPv4(p))) && (!(PacketIsIPv6(p)))) {
         goto not_supported;
     }
 
@@ -281,7 +281,7 @@ static int LuaFileLogger(ThreadVars *tv, void *thread_data, const Packet *p, con
     SCEnter();
     LogLuaThreadCtx *td = (LogLuaThreadCtx *)thread_data;
 
-    if ((!(PKT_IS_IPV4(p))) && (!(PKT_IS_IPV6(p))))
+    if ((!(PacketIsIPv4(p))) && (!(PacketIsIPv6(p))))
         return 0;
 
     BUG_ON(ff->flags & FILE_LOGGED);
@@ -403,6 +403,33 @@ typedef struct LogLuaScriptOptions_ {
     int stats;
 } LogLuaScriptOptions;
 
+/** \brief Setup or clear Lua module search paths.
+ *
+ * If search paths are provided by the configuration, set them up,
+ * otherwise clear the default search paths.
+ */
+static void LuaSetPaths(lua_State *L, LogLuaMasterCtx *ctx)
+{
+    lua_getglobal(L, "package");
+
+    if (strlen(ctx->path) > 0) {
+        lua_pushstring(L, ctx->path);
+    } else {
+        lua_pushstring(L, "");
+    }
+    lua_setfield(L, -2, "path");
+
+    if (strlen(ctx->cpath) > 0) {
+        lua_pushstring(L, ctx->cpath);
+    } else {
+        lua_pushstring(L, "");
+    }
+    lua_setfield(L, -2, "cpath");
+
+    /* Pop package. */
+    lua_pop(L, 1);
+}
+
 /** \brief load and evaluate the script
  *
  *  This function parses the script, checks if all the required functions
@@ -413,11 +440,14 @@ typedef struct LogLuaScriptOptions_ {
  *  \param options struct to pass script requirements/options back to caller
  *  \retval errcode 0 ok, -1 error
  */
-static int LuaScriptInit(const char *filename, LogLuaScriptOptions *options) {
+static int LuaScriptInit(const char *filename, LogLuaScriptOptions *options, LogLuaMasterCtx *ctx)
+{
     lua_State *luastate = LuaGetState();
     if (luastate == NULL)
         goto error;
     luaL_openlibs(luastate);
+    SCLuaRequirefBuiltIns(luastate);
+    LuaSetPaths(luastate, ctx);
 
     int status = luaL_loadfile(luastate, filename);
     if (status) {
@@ -500,8 +530,10 @@ static int LuaScriptInit(const char *filename, LogLuaScriptOptions *options) {
             options->tcp_data = 1;
         else if (strcmp(k, "type") == 0 && strcmp(v, "stats") == 0)
             options->stats = 1;
-        else
-            SCLogInfo("unknown key and/or value: k='%s', v='%s'", k, v);
+        else {
+            SCLogError("unknown key and/or value: k='%s', v='%s'", k, v);
+            goto error;
+        }
     }
 
     if (((options->alproto != ALPROTO_UNKNOWN)) + options->packet + options->file > 1) {
@@ -541,7 +573,7 @@ error:
  *
  *  \retval state Returns the set up luastate on success, NULL on error
  */
-static lua_State *LuaScriptSetup(const char *filename)
+static lua_State *LuaScriptSetup(const char *filename, LogLuaMasterCtx *ctx)
 {
     lua_State *luastate = LuaGetState();
     if (luastate == NULL) {
@@ -550,6 +582,8 @@ static lua_State *LuaScriptSetup(const char *filename)
     }
 
     luaL_openlibs(luastate);
+    SCLuaRequirefBuiltIns(luastate);
+    LuaSetPaths(luastate, ctx);
 
     int status = luaL_loadfile(luastate, filename);
     if (status) {
@@ -618,12 +652,11 @@ static OutputInitResult OutputLuaLogInitSub(ConfNode *conf, OutputCtx *parent_ct
 
     SCMutexInit(&lua_ctx->m, NULL);
 
-    const char *dir = "";
-    if (parent_ctx && parent_ctx->data) {
-        LogLuaMasterCtx *mc = parent_ctx->data;
-        dir = mc->path;
-    }
+    BUG_ON(parent_ctx == NULL);
+    LogLuaMasterCtx *mc = parent_ctx->data;
+    BUG_ON(mc == NULL);
 
+    const char *dir = mc->script_dir;
     char path[PATH_MAX] = "";
     int ret = snprintf(path, sizeof(path),"%s%s%s", dir, strlen(dir) ? "/" : "", conf->val);
     if (ret < 0 || ret == sizeof(path)) {
@@ -633,7 +666,7 @@ static OutputInitResult OutputLuaLogInitSub(ConfNode *conf, OutputCtx *parent_ct
     SCLogDebug("script full path %s", path);
 
     SCMutexLock(&lua_ctx->m);
-    lua_ctx->luastate = LuaScriptSetup(path);
+    lua_ctx->luastate = LuaScriptSetup(path, mc);
     SCMutexUnlock(&lua_ctx->m);
     if (lua_ctx->luastate == NULL)
         goto error;
@@ -698,7 +731,18 @@ static OutputInitResult OutputLuaLogInit(ConfNode *conf)
         return result;
     }
     LogLuaMasterCtx *master_config = output_ctx->data;
-    strlcpy(master_config->path, dir, sizeof(master_config->path));
+    strlcpy(master_config->script_dir, dir, sizeof(master_config->script_dir));
+
+    const char *lua_path = ConfNodeLookupChildValue(conf, "path");
+    if (lua_path && strlen(lua_path) > 0) {
+        strlcpy(master_config->path, lua_path, sizeof(master_config->path));
+    }
+
+    const char *lua_cpath = ConfNodeLookupChildValue(conf, "cpath");
+    if (lua_cpath && strlen(lua_cpath) > 0) {
+        strlcpy(master_config->cpath, lua_cpath, sizeof(master_config->cpath));
+    }
+
     TAILQ_INIT(&output_ctx->submodules);
 
     /* check the enables scripts and set them up as submodules */
@@ -712,7 +756,7 @@ static OutputInitResult OutputLuaLogInit(ConfNode *conf)
         snprintf(path, sizeof(path),"%s%s%s", dir, strlen(dir) ? "/" : "", script->val);
         SCLogDebug("script full path %s", path);
 
-        int r = LuaScriptInit(path, &opts);
+        int r = LuaScriptInit(path, &opts, master_config);
         if (r != 0) {
             SCLogError("couldn't initialize script");
             goto error;
@@ -888,11 +932,3 @@ void LuaLogRegister(void) {
     /* register as separate module */
     OutputRegisterModule(MODULE_NAME, "lua", OutputLuaLogInit);
 }
-
-#else /* HAVE_LUA */
-
-void LuaLogRegister (void) {
-    /* no-op */
-}
-
-#endif /* HAVE_LUA */

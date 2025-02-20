@@ -20,15 +20,14 @@
  *  \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __RUNMODES_H__
-#define __RUNMODES_H__
+#ifndef SURICATA_RUNMODES_H
+#define SURICATA_RUNMODES_H
 
 /* Run mode */
 enum RunModes {
     RUNMODE_UNKNOWN = 0,
     RUNMODE_PCAP_DEV,
     RUNMODE_PCAP_FILE,
-    RUNMODE_PFRING,
     RUNMODE_NFQ,
     RUNMODE_NFLOG,
     RUNMODE_IPFW,
@@ -39,7 +38,6 @@ enum RunModes {
     RUNMODE_NETMAP,
     RUNMODE_DPDK,
     RUNMODE_UNITTEST,
-    RUNMODE_NAPATECH,
     RUNMODE_UNIX_SOCKET,
     RUNMODE_WINDIVERT,
     RUNMODE_PLUGIN,
@@ -80,17 +78,15 @@ char *RunmodeGetActive(void);
 const char *RunModeGetMainMode(void);
 
 void RunModeListRunmodes(void);
-void RunModeEngineIsIPS(int capture_mode, const char *runmode, const char *capture_plugin_name);
+int RunModeEngineIsIPS(int capture_mode, const char *runmode, const char *capture_plugin_name);
 void RunModeDispatch(int, const char *, const char *capture_plugin_name, const char *capture_plugin_args);
 void RunModeRegisterRunModes(void);
 void RunModeRegisterNewRunMode(enum RunModes, const char *, const char *, int (*RunModeFunc)(void),
-        void (*RunModeIsIPSEnabled)(void));
+        int (*RunModeIsIPSEnabled)(void));
 void RunModeInitializeThreadSettings(void);
 void RunModeInitializeOutputs(void);
 void RunModeShutDown(void);
 
-/* bool indicating if file logger is enabled */
-int RunModeOutputFileEnabled(void);
 /* bool indicating if filedata logger is enabled */
 int RunModeOutputFiledataEnabled(void);
 /** bool indicating if run mode is offline */
@@ -106,4 +102,4 @@ extern uint64_t threading_set_stack_size;
 
 extern int debuglog_enabled;
 
-#endif /* __RUNMODES_H__ */
+#endif /* SURICATA_RUNMODES_H */

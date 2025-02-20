@@ -38,6 +38,88 @@ Upgrading 7.0 to 8.0
 --------------------
 .. note:: ``stats.whitelist`` has been renamed to ``stats.score`` in ``eve.json``
 
+Major changes
+~~~~~~~~~~~~~
+- SIP parser has been updated to inspect traffic carried by TCP as well.
+  SIP keywords can still match on their respective fields in addition
+  to these improvements.
+  Transactions are logged with the same schema regardless of which
+  transport protocol is carrying the payload.
+  Also, SIP protocol is detected using pattern matching and not only
+  probing parser.
+- ``SIP_PORTS`` variable has been introduced in suricata.yaml
+- Application layer's ``sip`` counter has been split into ``sip_tcp`` and ``sip_udp``
+  for the ``stats`` event.
+- Stats counters that are 0 can now be hidden from EVE logs. Default behavior
+  still logs those (see :ref:`EVE Output - Stats <eve-json-output-stats>` for configuration setting).
+- SDP parser and logger have been introduced.
+  Due to SDP being encapsulated within other protocols, such as SIP, they cannot be directly enabled or disabled.
+  Instead, both the SDP parser and logger depend on being invoked by another parser (or logger).
+- ARP decoder and logger have been introduced.
+  Since ARP can be quite verbose and produce many events, the logger is disabled by default.
+- It is possible to see an increase of alerts, for the same rule-sets, if you
+  use many stream/payload rules, due to Suricata triggering TCP stream
+  reassembly earlier.
+- New transform ``from_base64`` that base64 decodes a buffer and passes the
+  decoded buffer. It's recommended that ``from_base64`` be used instead of ``base64_decode``
+- Datasets of type String now include the length of the strings to determine if the memcap value is reached.
+  This may lead to memcaps being hit for older setups that didn't take that into account.
+  For more details, check https://redmine.openinfosecfoundation.org/issues/3910
+- DNS logging has been modified to be more consistent across requests,
+  responses and alerts. See :doc:`DNS Logging Changes for 8.0
+  <upgrade/8.0-dns-logging-changes>`.
+- PF_RING support has been moved to a plugin. See :doc:`PF_RING plugin
+  <upgrade/8.0-pfring-plugin>`.
+- LDAP parser and logger have been introduced.
+- The following sticky buffers for matching SIP headers have been implemented:
+    - sip.via
+    - sip.from
+    - sip.to
+    - sip.content_type
+    - sip.content_length
+- Napatech support has been moved to a capture plugin. See :doc:`Napatech plugin
+  <upgrade/8.0-napatech-plugin>`.
+- Unknown requirements in the ``requires`` keyword will now be treated
+  as unmet requirements, causing the rule to not be loaded. See
+  :ref:`keyword_requires`.
+- The configuration setting controlling stream checksum checks no longer affects
+  checksum keyword validation. In Suricata 7.0, when ``stream.checksum-validation``
+  was set to ``no``, the checksum keywords (e.g., ``ipv4-csum``, ``tcpv4-csum``, etc)
+  will always consider it valid; e.g., ``tcpv4-csum: invalid`` will never match. In
+  Suricata 8.0, ``stream.checksum-validation`` no longer affects the checksum rule keywords.
+  E.g., ``ipv4-csum: valid`` will only match if the check sum is valid, even when engine
+  checksum validations are disabled.
+- Lua detection scripts (rules) now run in a sandboxed
+  environment. See :ref:`lua-detection`.
+- Lua output scripts have no default module search path, a search path
+  will need to be set before external modules can be loaded. See the
+  new default configuration file or :ref:`lua-output-yaml` for more
+  details.
+
+Removals
+~~~~~~~~
+- The ssh keywords ``ssh.protoversion`` and ``ssh.softwareversion`` have been removed.
+
+Deprecations
+~~~~~~~~~~~~
+- The ``http-log`` output is now deprecated and will be removed in Suricata 9.0.
+- The ``tls-log`` output is now deprecated and will be removed in Suricata 9.0.
+- The ``syslog`` output is now deprecated and will be removed in
+  Suricata 9.0. Note that this is the standalone ``syslog`` output and
+  does affect the ``eve`` outputs ability to send to syslog.
+
+Logging changes
+~~~~~~~~~~~~~~~
+- RFB security result is now consistently logged as ``security_result`` when it was
+  sometimes logged with a dash instead of an underscore.
+- Application layer metadata is logged with alerts by default **only for rules that
+  use application layer keywords**. For other rules, the configuration parameter
+  ``detect.guess-applayer-tx`` can be used to force the detect engine to guess a
+  transaction, which is not guaranteed to be the one you expect. **In this case,
+  the engine will NOT log any transaction metadata if there is more than one
+  live transaction, to reduce the chances of logging unrelated data.** This may
+  lead to what looks like a regression in behavior, but it is a considered choice.
+
 Upgrading 6.0 to 7.0
 --------------------
 
@@ -51,6 +133,9 @@ Major changes
   <https://forum.suricata.io/t/my-traffic-gets-blocked-after-upgrading-to-suricata-7>`_.
 - New protocols enabled by default: bittorrent-dht, quic, http2.
 - The telnet protocol is also enabled by default, but only for the ``app-layer``.
+- Spaces are accepted in HTTP1 URIs instead of in the protocol version. That is:
+  `GET /a b HTTP/1.1` gets now URI as `/a b` and protocol as `HTTP/1.1` when
+  it used to be URI as `/a` and protocol as `b HTTP/1.1`
 
 Security changes
 ~~~~~~~~~~~~~~~~
@@ -136,6 +221,16 @@ Logging changes
 
      For more information, refer to:
      https://redmine.openinfosecfoundation.org/issues/1275.
+
+- Engine logging/output now uses separate defaults for ``console`` and ``file``, to provide a cleaner output on the console.
+
+  Defaults are:
+
+  * ``console``: ``%D: %S: %M``
+
+  * ``file``: ``[%i - %m] %z %d: %S: %M``
+
+  The ``console`` output also changes based on verbosity level.
 
 Deprecations
 ~~~~~~~~~~~~

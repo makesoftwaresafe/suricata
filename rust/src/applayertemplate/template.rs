@@ -17,17 +17,24 @@
 
 use super::parser;
 use crate::applayer::{self, *};
-use crate::core::{AppProto, Flow, ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::conf::conf_get;
+use crate::core::{ALPROTO_UNKNOWN, IPPROTO_TCP};
+use crate::flow::Flow;
 use nom7 as nom;
+use suricata_sys::sys::AppProto;
 use std;
 use std::collections::VecDeque;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
 
-static mut ALPROTO_TEMPLATE: AppProto = ALPROTO_UNKNOWN;
+static mut TEMPLATE_MAX_TX: usize = 256;
+
+pub(super) static mut ALPROTO_TEMPLATE: AppProto = ALPROTO_UNKNOWN;
 
 #[derive(AppLayerEvent)]
-enum TemplateEvent {}
+enum TemplateEvent {
+    TooManyTransactions,
+}
 
 pub struct TemplateTransaction {
     tx_id: u64,
@@ -145,7 +152,13 @@ impl TemplateState {
                     SCLogNotice!("Request: {}", request);
                     let mut tx = self.new_tx();
                     tx.request = Some(request);
+                    if self.transactions.len() >= unsafe {TEMPLATE_MAX_TX} {
+                        tx.tx_data.set_event(TemplateEvent::TooManyTransactions as u8);
+                    }
                     self.transactions.push_back(tx);
+                    if self.transactions.len() >= unsafe {TEMPLATE_MAX_TX} {
+                        return AppLayerResult::err();
+                    }
                 }
                 Err(nom::Err::Incomplete(_)) => {
                     // Not enough data. This parser doesn't give us a good indication
@@ -189,6 +202,7 @@ impl TemplateState {
                     start = rem;
 
                     if let Some(tx) =  self.find_request() {
+                        tx.tx_data.updated_tc = true;
                         tx.response = Some(response);
                         SCLogNotice!("Found response for request:");
                         SCLogNotice!("- Request: {:?}", tx.request);
@@ -336,43 +350,8 @@ unsafe extern "C" fn rs_template_tx_get_alstate_progress(tx: *mut c_void, _direc
     return 0;
 }
 
-/// Get the request buffer for a transaction from C.
-///
-/// No required for parsing, but an example function for retrieving a
-/// pointer to the request buffer from C for detection.
-#[no_mangle]
-pub unsafe extern "C" fn rs_template_get_request_buffer(
-    tx: *mut c_void, buf: *mut *const u8, len: *mut u32,
-) -> u8 {
-    let tx = cast_pointer!(tx, TemplateTransaction);
-    if let Some(ref request) = tx.request {
-        if !request.is_empty() {
-            *len = request.len() as u32;
-            *buf = request.as_ptr();
-            return 1;
-        }
-    }
-    return 0;
-}
-
-/// Get the response buffer for a transaction from C.
-#[no_mangle]
-pub unsafe extern "C" fn rs_template_get_response_buffer(
-    tx: *mut c_void, buf: *mut *const u8, len: *mut u32,
-) -> u8 {
-    let tx = cast_pointer!(tx, TemplateTransaction);
-    if let Some(ref response) = tx.response {
-        if !response.is_empty() {
-            *len = response.len() as u32;
-            *buf = response.as_ptr();
-            return 1;
-        }
-    }
-    return 0;
-}
-
-export_tx_data_get!(rs_template_get_tx_data, TemplateTransaction);
-export_state_data_get!(rs_template_get_state_data, TemplateState);
+export_tx_data_get!(template_get_tx_data, TemplateTransaction);
+export_state_data_get!(template_get_state_data, TemplateState);
 
 // Parser name as a C style string.
 const PARSER_NAME: &[u8] = b"template\0";
@@ -412,11 +391,10 @@ pub unsafe extern "C" fn rs_template_register_parser() {
         get_tx_iterator: Some(
             applayer::state_get_tx_iterator::<TemplateState, TemplateTransaction>,
         ),
-        get_tx_data: rs_template_get_tx_data,
-        get_state_data: rs_template_get_state_data,
+        get_tx_data: template_get_tx_data,
+        get_state_data: template_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
-        truncate: None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };
@@ -429,6 +407,14 @@ pub unsafe extern "C" fn rs_template_register_parser() {
         if AppLayerParserConfParserEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {
             let _ = AppLayerRegisterParser(&parser, alproto);
         }
+        if let Some(val) = conf_get("app-layer.protocols.template.max-tx") {
+            if let Ok(v) = val.parse::<usize>() {
+                TEMPLATE_MAX_TX = v;
+            } else {
+                SCLogError!("Invalid value for template.max-tx");
+            }
+        }
+        AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_TEMPLATE);
         SCLogNotice!("Rust template parser registered.");
     } else {
         SCLogNotice!("Protocol detector and parser disabled for TEMPLATE.");

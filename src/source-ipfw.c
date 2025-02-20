@@ -42,15 +42,6 @@
 #include "util-device.h"
 #include "runmodes.h"
 
-#define IPFW_ACCEPT 0
-#define IPFW_DROP 1
-
-#define IPFW_SOCKET_POLL_MSEC 300
-
-#ifndef IP_MAXPACKET
-#define IP_MAXPACKET 65535
-#endif
-
 #ifndef IPFW
 /* Handle the case if --enable-ipfw was not used
  *
@@ -102,7 +93,12 @@ TmEcode NoIPFWSupportExit(ThreadVars *tv, const void *initdata, void **data)
 
 #include "action-globals.h"
 
-extern uint16_t max_pending_packets;
+#define IPFW_ACCEPT 0
+#define IPFW_DROP   1
+
+#define IPFW_SOCKET_POLL_MSEC 300
+
+extern uint32_t max_pending_packets;
 
 /**
  * \brief Structure to hold thread specific variables.
@@ -222,6 +218,10 @@ static inline void IPFWMutexUnlock(IPFWQueueVars *nq)
     if (nq->use_mutex)
         SCMutexUnlock(&nq->socket_lock);
 }
+
+#ifndef IP_MAXPACKET
+#define IP_MAXPACKET 65535
+#endif
 
 TmEcode ReceiveIPFWLoop(ThreadVars *tv, void *data, void *slot)
 {
@@ -412,8 +412,7 @@ TmEcode ReceiveIPFWThreadDeinit(ThreadVars *tv, void *data)
 
     SCEnter();
 
-    /* Attempt to shut the socket down...close instead? */
-    if (shutdown(nq->fd, SHUT_RD) < 0) {
+    if (close(nq->fd) < 0) {
         SCLogWarning("Unable to disable ipfw socket: %s", strerror(errno));
         SCReturnInt(TM_ECODE_FAILED);
     }
@@ -615,13 +614,12 @@ TmEcode VerdictIPFW(ThreadVars *tv, Packet *p, void *data)
     }
 
     /* This came from NFQ.
-     *  if this is a tunnel packet we check if we are ready to verdict
-     * already. */
-    if (IS_TUNNEL_PKT(p)) {
+     * If this is a tunnel packet we check if we are ready to verdict already. */
+    if (PacketIsTunnel(p)) {
         bool verdict = VerdictTunnelPacket(p);
 
         /* don't verdict if we are not ready */
-        if (verdict == true) {
+        if (verdict) {
             SCLogDebug("Setting verdict on tunnel");
             retval = IPFWSetVerdict(tv, ptv, p->root ? p->root : p);
         }
@@ -629,7 +627,7 @@ TmEcode VerdictIPFW(ThreadVars *tv, Packet *p, void *data)
         /* no tunnel, verdict normally */
         SCLogDebug("Setting verdict on non-tunnel");
         retval = IPFWSetVerdict(tv, ptv, p);
-    } /* IS_TUNNEL_PKT end */
+    }
 
     SCReturnInt(retval);
 }

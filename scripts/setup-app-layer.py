@@ -101,7 +101,8 @@ def patch_rust_lib_rs(protoname):
             output.write(line)
     open(filename, "w").write(output.getvalue())
 
-def patch_rust_applayer_mod_rs(protoname):
+# arg is the name of the new module to add
+def patch_rust_applayer_mod_rs(protoname, arg):
     lower = protoname.lower()
     filename = "rust/src/applayer%s/mod.rs" % (lower)
     print("Patching %s." % (filename))
@@ -110,7 +111,7 @@ def patch_rust_applayer_mod_rs(protoname):
     with open(filename) as infile:
         for line in infile:
             if not done and line.find("mod parser") > -1:
-                output.write("pub mod logger;\n")
+                output.write("pub mod %s;\n" % arg)
                 done = True
             output.write(line)
     open(filename, "w").write(output.getvalue())
@@ -128,7 +129,7 @@ def patch_app_layer_protos_h(protoname):
     open(filename, "w").write(output.getvalue())
 
 def patch_app_layer_protos_c(protoname):
-    filename = "src/app-layer-protos.c"
+    filename = "src/app-layer.c"
     print("Patching %s." % (filename))
     output = io.StringIO()
 
@@ -200,15 +201,21 @@ def logger_patch_output_c(proto):
     output = io.StringIO()
     inlines = open(filename).readlines()
     for i, line in enumerate(inlines):
-        if line.find("ALPROTO_TEMPLATE") > -1:
-            new_line = line.replace("TEMPLATE", proto.upper()).replace(
-                    "template", proto.lower())
-            output.write(new_line)
-        if line.find("output-json-template.h") > -1:
-            output.write(line.replace("template", proto.lower()))
         if line.find("/* Template JSON logger.") > -1:
             output.write(inlines[i].replace("Template", proto))
             output.write(inlines[i+1].replace("Template", proto))
+            output.write(inlines[i+2].replace("TEMPLATE", proto.upper()).replace(
+                    "template", proto.lower()).replace("Template", proto))
+            output.write(inlines[i+3])
+        if line.find("rs_template_logger_log") > -1:
+            output.write(inlines[i].replace("TEMPLATE", proto.upper()).replace(
+                    "template", proto.lower()))
+        if line.find("OutputTemplateLogInitSub(") > -1:
+            output.write(inlines[i].replace("Template", proto))
+            output.write(inlines[i+1])
+            output.write(inlines[i+2].replace("TEMPLATE", proto.upper()))
+            output.write(inlines[i+3])
+            output.write(inlines[i+4])
         output.write(line)
     open(filename, "w").write(output.getvalue())
 
@@ -216,26 +223,11 @@ def logger_copy_templates(proto):
     lower = proto.lower()
     
     pairs = (
-        ("src/output-json-template.h",
-         "src/output-json-%s.h" % (lower)),
-        ("src/output-json-template.c",
-         "src/output-json-%s.c" % (lower)),
         ("rust/src/applayertemplate/logger.rs",
          "rust/src/applayer%s/logger.rs" % (lower)),
     )
 
     common_copy_templates(proto, pairs)
-
-def logger_patch_makefile_am(protoname):
-    filename = "src/Makefile.am"
-    print("Patching %s." % (filename))
-    output = io.StringIO()
-    with open(filename) as infile:
-        for line in infile:
-            if line.lstrip().startswith("output-json-template."):
-                output.write(line.replace("template", protoname.lower()))
-            output.write(line)
-    open(filename, "w").write(output.getvalue())
 
 
 def detect_copy_templates(proto, buffername):
@@ -243,68 +235,32 @@ def detect_copy_templates(proto, buffername):
     buffername_lower = buffername.lower()
 
     pairs = (
-        ("src/detect-template-rust-buffer.h",
-         "src/detect-%s-%s.h" % (lower, buffername_lower)),
-        ("src/detect-template-rust-buffer.c",
-         "src/detect-%s-%s.c" % (lower, buffername_lower)),
+        ("rust/src/applayertemplate/detect.rs",
+         "rust/src/applayer%s/detect.rs" % (lower)),
     )
     replacements = (
-        ("TEMPLATE_RUST_BUFFER", "%s_%s" % (
+        ("TEMPLATE_BUFFER", "%s_%s" % (
             proto.upper(), buffername.upper())),
-        ("template-rust-buffer", "%s-%s" % (
+        ("template.buffer", "%s.%s" % (
             proto.lower(), buffername.lower())),
-        ("template_rust_buffer", "%s_%s" % (
+        ("template_buffer", "%s_%s" % (
             proto.lower(), buffername.lower())),
-        ("TemplateRustBuffer", "%s%s" % (proto, buffername)),
     )
 
     common_copy_templates(proto, pairs, replacements)
 
-def detect_patch_makefile_am(protoname, buffername):
-    filename = "src/Makefile.am"
-    print("Patching %s." % (filename))
-    output = io.StringIO()
-    with open(filename) as infile:
-        for line in infile:
-            if line.lstrip().startswith("detect-template-buffer."):
-                new = line.replace("template-buffer", "%s-%s" % (
-                    protoname.lower(), buffername.lower()))
-                output.write(new)
-            output.write(line)
-    open(filename, "w").write(output.getvalue())
-
-def detect_patch_detect_engine_register_c(protoname, buffername):
+def detect_patch_detect_engine_register_c(protoname):
     filename = "src/detect-engine-register.c"
     print("Patching %s." % (filename))
     output = io.StringIO()
     with open(filename) as infile:
         for line in infile:
-
-            if line.find("detect-template-buffer.h") > -1:
-                new = line.replace("template-buffer", "%s-%s" % (
-                    protoname.lower(), buffername.lower()))
+            if line.find("ScDetect%sRegister" % protoname) > -1:
+                # patch already applied
+                return
+            if line.find("ScDetectTemplateRegister") > -1:
+                new = line.replace("Template", "%s" % protoname)
                 output.write(new)
-
-            if line.find("DetectTemplateBufferRegister") > -1:
-                new = line.replace("TemplateBuffer", "%s%s" % (
-                    protoname, buffername))
-                output.write(new)
-
-            output.write(line)
-    open(filename, "w").write(output.getvalue())
-
-def detect_patch_detect_engine_register_h(protoname, buffername):
-    filename = "src/detect-engine-register.h"
-    print("Patching %s." % (filename))
-    output = io.StringIO()
-    with open(filename) as infile:
-        for line in infile:
-
-            if line.find("DETECT_AL_TEMPLATE_BUFFER") > -1:
-                new = line.replace("TEMPLATE_BUFFER", "%s_%s" % (
-                    protoname.upper(), buffername.upper()))
-                output.write(new)
-
             output.write(line)
     open(filename, "w").write(output.getvalue())
 
@@ -397,8 +353,7 @@ def main():
         if not proto_exists(proto):
             raise SetupError("no app-layer parser exists for %s" % (proto))
         logger_copy_templates(proto)
-        patch_rust_applayer_mod_rs(proto)
-        logger_patch_makefile_am(proto)
+        patch_rust_applayer_mod_rs(proto, "logger")
         logger_patch_output_c(proto)
         logger_patch_suricata_yaml_in(proto)
 
@@ -406,9 +361,8 @@ def main():
         if not proto_exists(proto):
             raise SetupError("no app-layer parser exists for %s" % (proto))
         detect_copy_templates(proto, args.buffer)
-        detect_patch_makefile_am(proto, args.buffer)
-        detect_patch_detect_engine_register_c(proto, args.buffer)
-        detect_patch_detect_engine_register_h(proto, args.buffer)
+        detect_patch_detect_engine_register_c(proto)
+        patch_rust_applayer_mod_rs(proto, "detect")
 
     if parser:
         print("""

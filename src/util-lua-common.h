@@ -21,10 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_LUA_COMMON_H__
-#define __UTIL_LUA_COMMON_H__
-
-#ifdef HAVE_LUA
+#ifndef SURICATA_UTIL_LUA_COMMON_H
+#define SURICATA_UTIL_LUA_COMMON_H
 
 int LuaCallbackError(lua_State *luastate, const char *msg);
 const char *LuaGetStringArgument(lua_State *luastate, int argc);
@@ -37,6 +35,11 @@ int LuaRegisterFunctions(lua_State *luastate);
 
 int LuaStateNeedProto(lua_State *luastate, AppProto alproto);
 
-#endif /* HAVE_LUA */
+/* hack to please scan-build. Even though LuaCallbackError *always*
+ * returns 2, scan-build doesn't accept it and generates false
+ * positives */
+#define LUA_ERROR(msg)                                                                             \
+    LuaCallbackError(luastate, (msg));                                                             \
+    return 2
 
-#endif /* __UTIL_LUA_COMMON_H__ */
+#endif /* SURICATA_UTIL_LUA_COMMON_H */

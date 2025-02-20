@@ -1,4 +1,4 @@
-const char configNoChecksum[] = "\
+const char *configNoChecksum = "\
 %YAML 1.1\n\
 ---\n\
 pcap-file:\n\
@@ -84,8 +84,6 @@ app-layer:\n\
     rdp:\n\
       enabled: yes\n\
     template:\n\
-      enabled: yes\n\
-    template-rust:\n\
       enabled: yes\n\
     modbus:\n\
       enabled: yes\n\

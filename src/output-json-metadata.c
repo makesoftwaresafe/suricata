@@ -74,7 +74,7 @@ static int MetadataJson(ThreadVars *tv, OutputJsonThreadCtx *aft, const Packet *
     if (!aft->ctx->cfg.include_metadata) {
         EveAddMetadata(p, p->flow, js);
     }
-    OutputJsonBuilderBuffer(js, aft);
+    OutputJsonBuilderBuffer(tv, p, p->flow, js, aft);
 
     jb_free(js);
     return TM_ECODE_OK;
@@ -96,10 +96,10 @@ void JsonMetadataLogRegister (void)
 {
     OutputRegisterPacketSubModule(LOGGER_JSON_METADATA, "eve-log", MODULE_NAME, "eve-log.metadata",
             OutputJsonLogInitSub, JsonMetadataLogger, JsonMetadataLogCondition, JsonLogThreadInit,
-            JsonLogThreadDeinit, NULL);
+            JsonLogThreadDeinit);
 
     /* Kept for compatibility. */
     OutputRegisterPacketSubModule(LOGGER_JSON_METADATA, "eve-log", MODULE_NAME, "eve-log.vars",
             OutputJsonLogInitSub, JsonMetadataLogger, JsonMetadataLogCondition, JsonLogThreadInit,
-            JsonLogThreadDeinit, NULL);
+            JsonLogThreadDeinit);
 }

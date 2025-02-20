@@ -27,25 +27,17 @@
  */
 
 #include "suricata-common.h"
-#include "detect.h"
-#include "pkt-var.h"
 #include "conf.h"
 
-#include "threads.h"
 #include "threadvars.h"
-#include "tm-threads.h"
 
 #include "util-print.h"
-#include "util-unittest.h"
-
 #include "util-debug.h"
 
 #include "output.h"
 #include "log-tlslog.h"
 #include "app-layer-ssl.h"
-#include "app-layer.h"
 #include "app-layer-parser.h"
-#include "util-privs.h"
 #include "util-buffer.h"
 
 #include "util-logopenfile.h"
@@ -58,8 +50,7 @@
 
 #define PRINT_BUF_LEN 46
 
-#define OUTPUT_BUFFER_SIZE   65535
-#define CERT_ENC_BUFFER_SIZE 2048
+#define OUTPUT_BUFFER_SIZE 65535
 
 #define LOG_TLS_DEFAULT  0
 #define LOG_TLS_EXTENDED 1
@@ -84,17 +75,11 @@ typedef struct LogTlsFileCtx_ {
 
 typedef struct LogTlsLogThread_ {
     LogTlsFileCtx *tlslog_ctx;
-
-    /* LogTlsFileCtx has the pointer to the file and a mutex to allow
-       multithreading. */
-    uint32_t tls_cnt;
-
     MemBuffer *buffer;
 } LogTlsLogThread;
 
-int TLSGetIPInformations(const Packet *p, char* srcip, size_t srcip_len,
-                         Port* sp, char* dstip, size_t dstip_len, Port* dp,
-                         int ipproto)
+int TLSGetIPInformations(const Packet *p, char *srcip, socklen_t srcip_len, Port *sp, char *dstip,
+        socklen_t dstip_len, Port *dp, int ipproto)
 {
     if ((PKT_IS_TOSERVER(p))) {
         switch (ipproto) {
@@ -187,22 +172,14 @@ static void LogTlsLogDeInitCtx(OutputCtx *output_ctx)
     SCFree(output_ctx);
 }
 
-static void LogTlsLogExitPrintStats(ThreadVars *tv, void *data)
-{
-    LogTlsLogThread *aft = (LogTlsLogThread *)data;
-    if (aft == NULL) {
-        return;
-    }
-
-    SCLogInfo("TLS logger logged %" PRIu32 " requests", aft->tls_cnt);
-}
-
 /** \brief Create a new tls log LogFileCtx.
  *  \param conf Pointer to ConfNode containing this loggers configuration.
  *  \return NULL if failure, LogFileCtx* to the file_ctx if succesful
  * */
 static OutputInitResult LogTlsLogInitCtx(ConfNode *conf)
 {
+    SCLogWarning("The tls-log output has been deprecated and will be removed in Suricata 9.0.");
+
     OutputInitResult result = { NULL, false };
     LogFileCtx* file_ctx = LogFileNewCtx();
 
@@ -478,7 +455,7 @@ static int LogTlsLogger(ThreadVars *tv, void *thread_data, const Packet *p,
 {
     LogTlsLogThread *aft = (LogTlsLogThread *)thread_data;
     LogTlsFileCtx *hlog = aft->tlslog_ctx;
-    int ipproto = (PKT_IS_IPV4(p)) ? AF_INET : AF_INET6;
+    int ipproto = (PacketIsIPv4(p)) ? AF_INET : AF_INET6;
 
     SSLState *ssl_state = (SSLState *)state;
     if (unlikely(ssl_state == NULL)) {
@@ -514,8 +491,6 @@ static int LogTlsLogger(ThreadVars *tv, void *thread_data, const Packet *p,
 
     MemBufferWriteString(aft->buffer, "\n");
 
-    aft->tls_cnt++;
-
     hlog->file_ctx->Write((const char *)MEMBUFFER_BUFFER(aft->buffer),
         MEMBUFFER_OFFSET(aft->buffer), hlog->file_ctx);
 
@@ -524,8 +499,7 @@ static int LogTlsLogger(ThreadVars *tv, void *thread_data, const Packet *p,
 
 void LogTlsLogRegister(void)
 {
-    OutputRegisterTxModuleWithProgress(LOGGER_TLS, MODULE_NAME, "tls-log",
-        LogTlsLogInitCtx, ALPROTO_TLS, LogTlsLogger, TLS_HANDSHAKE_DONE,
-        TLS_HANDSHAKE_DONE, LogTlsLogThreadInit, LogTlsLogThreadDeinit,
-        LogTlsLogExitPrintStats);
+    OutputRegisterTxModuleWithProgress(LOGGER_TLS, MODULE_NAME, "tls-log", LogTlsLogInitCtx,
+            ALPROTO_TLS, LogTlsLogger, TLS_HANDSHAKE_DONE, TLS_HANDSHAKE_DONE, LogTlsLogThreadInit,
+            LogTlsLogThreadDeinit);
 }

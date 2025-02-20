@@ -193,7 +193,7 @@ static void NetFlowLogEveToServer(JsonBuilder *js, Flow *f)
     jb_set_string(js, "start", timebuf1);
     jb_set_string(js, "end", timebuf2);
 
-    int32_t age = SCTIME_SECS(f->lastts) - SCTIME_SECS(f->startts);
+    uint64_t age = (SCTIME_SECS(f->lastts) - SCTIME_SECS(f->startts));
     jb_set_uint(js, "age", age);
 
     jb_set_uint(js, "min_ttl", f->min_ttl_toserver);
@@ -237,7 +237,7 @@ static void NetFlowLogEveToClient(JsonBuilder *js, Flow *f)
     jb_set_string(js, "start", timebuf1);
     jb_set_string(js, "end", timebuf2);
 
-    int32_t age = SCTIME_SECS(f->lastts) - SCTIME_SECS(f->startts);
+    uint64_t age = (SCTIME_SECS(f->lastts) - SCTIME_SECS(f->startts));
     jb_set_uint(js, "age", age);
 
     /* To client is zero if we did not see any packet */
@@ -275,8 +275,8 @@ static int JsonNetFlowLogger(ThreadVars *tv, void *thread_data, Flow *f)
     if (unlikely(jb == NULL))
         return TM_ECODE_OK;
     NetFlowLogEveToServer(jb, f);
-    EveAddCommonOptions(&jhl->ctx->cfg, NULL, f, jb);
-    OutputJsonBuilderBuffer(jb, jhl);
+    EveAddCommonOptions(&jhl->ctx->cfg, NULL, f, jb, LOG_DIR_FLOW_TOSERVER);
+    OutputJsonBuilderBuffer(tv, NULL, f, jb, jhl);
     jb_free(jb);
 
     /* only log a response record if we actually have seen response packets */
@@ -285,8 +285,8 @@ static int JsonNetFlowLogger(ThreadVars *tv, void *thread_data, Flow *f)
         if (unlikely(jb == NULL))
             return TM_ECODE_OK;
         NetFlowLogEveToClient(jb, f);
-        EveAddCommonOptions(&jhl->ctx->cfg, NULL, f, jb);
-        OutputJsonBuilderBuffer(jb, jhl);
+        EveAddCommonOptions(&jhl->ctx->cfg, NULL, f, jb, LOG_DIR_FLOW_TOCLIENT);
+        OutputJsonBuilderBuffer(tv, NULL, f, jb, jhl);
         jb_free(jb);
     }
     SCReturnInt(TM_ECODE_OK);
@@ -296,5 +296,5 @@ void JsonNetFlowLogRegister(void)
 {
     /* register as child of eve-log */
     OutputRegisterFlowSubModule(LOGGER_JSON_NETFLOW, "eve-log", "JsonNetFlowLog", "eve-log.netflow",
-            OutputJsonLogInitSub, JsonNetFlowLogger, JsonLogThreadInit, JsonLogThreadDeinit, NULL);
+            OutputJsonLogInitSub, JsonNetFlowLogger, JsonLogThreadInit, JsonLogThreadDeinit);
 }

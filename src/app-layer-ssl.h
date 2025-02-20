@@ -23,8 +23,8 @@
  *
  */
 
-#ifndef __APP_LAYER_SSL_H__
-#define __APP_LAYER_SSL_H__
+#ifndef SURICATA_APP_LAYER_SSL_H
+#define SURICATA_APP_LAYER_SSL_H
 
 #include "util-ja3.h"
 #include "rust.h"
@@ -141,6 +141,8 @@ enum {
 #define SSL_EXTENSION_SNI                       0x0000
 #define SSL_EXTENSION_ELLIPTIC_CURVES           0x000a
 #define SSL_EXTENSION_EC_POINT_FORMATS          0x000b
+#define SSL_EXTENSION_SIGNATURE_ALGORITHMS      0x000d
+#define SSL_EXTENSION_ALPN                      0x0010
 #define SSL_EXTENSION_SESSION_TICKET            0x0023
 #define SSL_EXTENSION_EARLY_DATA                0x002a
 #define SSL_EXTENSION_SUPPORTED_VERSIONS        0x002b
@@ -224,6 +226,11 @@ typedef struct SSLCertsChain_ {
     TAILQ_ENTRY(SSLCertsChain_) next;
 } SSLCertsChain;
 
+typedef struct SSLAlpns_ {
+    TAILQ_ENTRY(SSLAlpns_) next;
+    uint32_t size;
+    uint8_t alpn[];
+} SSLAlpns;
 
 typedef struct SSLStateConnp_ {
     /* record length */
@@ -252,12 +259,15 @@ typedef struct SSLStateConnp_ {
     int64_t cert0_not_after;
     char *cert0_fingerprint;
 
+    char **cert0_sans;
+    uint16_t cert0_sans_len;
     /* ssl server name indication extension */
     char *sni;
 
     char *session_id;
 
     TAILQ_HEAD(, SSLCertsChain_) certs;
+    TAILQ_HEAD(, SSLAlpns_) alpns;
 
     uint8_t *certs_buffer;
     uint32_t certs_buffer_size;
@@ -266,6 +276,8 @@ typedef struct SSLStateConnp_ {
 
     JA3Buffer *ja3_str;
     char *ja3_hash;
+
+    JA4 *ja4;
 
     /* handshake tls fragmentation buffer. Handshake messages can be fragmented over multiple
      * TLS records. */
@@ -307,5 +319,7 @@ void RegisterSSLParsers(void);
 void SSLVersionToString(uint16_t, char *);
 void SSLEnableJA3(void);
 bool SSLJA3IsEnabled(void);
+void SSLEnableJA4(void);
+bool SSLJA4IsEnabled(void);
 
-#endif /* __APP_LAYER_SSL_H__ */
+#endif /* SURICATA_APP_LAYER_SSL_H */

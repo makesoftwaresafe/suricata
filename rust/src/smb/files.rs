@@ -17,6 +17,7 @@
 
 use std;
 use crate::core::*;
+use crate::direction::Direction;
 use crate::filetracker::*;
 use crate::filecontainer::*;
 
@@ -126,6 +127,8 @@ impl SMBState {
                     tx.tx_data.update_file_flags(self.state_data.file_flags);
                     d.update_file_flags(tx.tx_data.file_flags);
                 }
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -152,6 +155,8 @@ impl SMBState {
                     tx.tx_data.update_file_flags(self.state_data.file_flags);
                     d.update_file_flags(tx.tx_data.file_flags);
                 }
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -230,7 +235,7 @@ impl SMBState {
 
 use crate::applayer::AppLayerGetFileState;
 #[no_mangle]
-pub unsafe extern "C" fn rs_smb_gettxfiles(_state: *mut std::ffi::c_void, tx: *mut std::ffi::c_void, direction: u8) -> AppLayerGetFileState {
+pub unsafe extern "C" fn rs_smb_gettxfiles(tx: *mut std::ffi::c_void, direction: u8) -> AppLayerGetFileState {
     let tx = cast_pointer!(tx, SMBTransaction);
     if let Some(SMBTransactionTypeData::FILE(ref mut tdf)) = tx.type_data {
         let tx_dir : u8 = tdf.direction.into();

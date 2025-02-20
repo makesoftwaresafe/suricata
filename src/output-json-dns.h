@@ -21,11 +21,13 @@
  * \author Tom DeCanio <td@npulsetech.com>
  */
 
-#ifndef __OUTPUT_JSON_DNS_H__
-#define __OUTPUT_JSON_DNS_H__
+#ifndef SURICATA_OUTPUT_JSON_DNS_H
+#define SURICATA_OUTPUT_JSON_DNS_H
 
 void JsonDnsLogRegister(void);
+void JsonDoh2LogRegister(void);
 
 bool AlertJsonDns(void *vtx, JsonBuilder *js);
+bool AlertJsonDoh2(void *vtx, JsonBuilder *js);
 
-#endif /* __OUTPUT_JSON_DNS_H__ */
+#endif /* SURICATA_OUTPUT_JSON_DNS_H */

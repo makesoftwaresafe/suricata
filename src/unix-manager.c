@@ -300,7 +300,7 @@ static int UnixCommandSendJSONToClient(UnixClient *client, json_t *js)
         if (MEMBUFFER_OFFSET(client->mbuf) + 1 >= MEMBUFFER_SIZE(client->mbuf)) {
             MemBufferExpand(&client->mbuf, 1);
         }
-        MemBufferWriteRaw(client->mbuf, "\n", 1);
+        MemBufferWriteString(client->mbuf, "\n");
     }
 
     if (send(client->fd, (const char *)MEMBUFFER_BUFFER(client->mbuf),
@@ -1205,7 +1205,6 @@ void UnixManagerThreadSpawn(int mode)
             FatalError("Unix socket init failed");
         }
     }
-    return;
 }
 
 // TODO can't think of a good name
@@ -1268,7 +1267,6 @@ again:
     }
 
     SCMutexUnlock(&tv_root_lock);
-    return;
 }
 
 #else /* BUILD_UNIX_SOCKET */
@@ -1276,17 +1274,14 @@ again:
 void UnixManagerThreadSpawn(int mode)
 {
     SCLogError("Unix socket is not compiled");
-    return;
 }
 
 void UnixSocketKillSocketThread(void)
 {
-    return;
 }
 
 void UnixManagerThreadSpawnNonRunmode(const bool unix_socket_enabled)
 {
-    return;
 }
 
 #endif /* BUILD_UNIX_SOCKET */

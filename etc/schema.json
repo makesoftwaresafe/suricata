@@ -51,6 +51,9 @@
         "icmp_type": {
             "type": "integer"
         },
+        "in_iface": {
+            "type": "string"
+        },
         "log_level": {
             "type": "string"
         },
@@ -62,6 +65,9 @@
         },
         "payload": {
             "type": "string"
+        },
+        "payload_length": {
+            "type": "integer"
         },
         "payload_printable": {
             "type": "string"
@@ -108,6 +114,10 @@
         },
         "tx_id": {
             "type": "integer"
+        },
+        "tx_guessed": {
+            "description": "the signature that triggered this alert didn't tie to a transaction, so the transaction (and metadata) logged is a forced estimation and may not be the one you expect",
+            "type": "boolean"
         },
         "files": {
             "type": "array",
@@ -282,6 +292,13 @@
                     },
                     "additionalProperties": true
                 },
+                "references": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "source": {
                     "type": "object",
                     "properties": {
@@ -327,6 +344,44 @@
                 },
                 "type": {
                     "type": "string"
+                },
+                "code": {
+                    "type": "integer"
+                }
+            },
+            "additionalProperties": false
+        },
+        "arp": {
+            "type": "object",
+            "optional": true,
+            "properties": {
+                "hw_type": {
+                    "type": "string",
+                    "description": "Network link protocol type"
+                },
+                "proto_type": {
+                    "type": "string",
+                    "description": "Internetwork protocol for which the ARP request is intended"
+                },
+                "opcode": {
+                    "type": "string",
+                    "description": "Specifies the operation that the sender is performing"
+                },
+                "src_mac": {
+                    "type": "string",
+                    "description": "Physical address of the sender"
+                },
+                "src_ip": {
+                    "type": "string",
+                    "description": "Logical address of the sender"
+                },
+                "dest_mac": {
+                    "type": "string",
+                    "description": "Physical address of the intended receiver"
+                },
+                "dest_ip": {
+                    "type": "string",
+                    "description": "Logical address of the intended receiver"
                 }
             },
             "additionalProperties": false
@@ -958,6 +1013,9 @@
         },
         "dns": {
             "type": "object",
+            "required": [
+                "version"
+            ],
             "properties": {
                 "aa": {
                     "type": "boolean"
@@ -993,11 +1051,16 @@
                     "type": "string"
                 },
                 "version": {
+                    "description": "The version of this EVE DNS event",
                     "type": "integer"
                 },
                 "opcode": {
                     "description": "DNS opcode as an integer",
                     "type": "integer"
+                },
+                "tc": {
+                    "description": "DNS truncation flag",
+                    "type": "boolean"
                 },
                 "answers": {
                     "type": "array",
@@ -1017,6 +1080,9 @@
                             "ttl": {
                                 "type": "integer"
                             },
+                            "soa": {
+                                "$ref": "#/$defs/dns.soa"
+                            },
                             "srv": {
                                 "type": "object",
                                 "properties": {
@@ -1034,51 +1100,19 @@
                                     }
                                 },
                                 "additionalProperties": false
-                            }
-                        },
-                        "additionalProperties": false
-                    }
-                },
-                "authorities": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "rdata": {
-                                "type": "string"
                             },
-                            "rrname": {
-                                "type": "string"
-                            },
-                            "rrtype": {
-                                "type": "string"
-                            },
-                            "ttl": {
-                                "type": "integer"
-                            },
-                            "soa": {
+                            "sshfp": {
+                                "description":
+                                        "A Secure Shell fingerprint, used to verify the system’s authenticity",
                                 "type": "object",
                                 "properties": {
-                                    "expire": {
-                                        "type": "integer"
-                                    },
-                                    "minimum": {
-                                        "type": "integer"
-                                    },
-                                    "mname": {
+                                    "fingerprint": {
                                         "type": "string"
                                     },
-                                    "refresh": {
+                                    "algo": {
                                         "type": "integer"
                                     },
-                                    "retry": {
-                                        "type": "integer"
-                                    },
-                                    "rname": {
-                                        "type": "string"
-                                    },
-                                    "serial": {
+                                    "type": {
                                         "type": "integer"
                                     }
                                 },
@@ -1088,7 +1122,15 @@
                         "additionalProperties": false
                     }
                 },
+                "authorities": {
+                    "$ref": "#/$defs/dns.authorities"
+                },
+                "additionals": {
+                    "$ref": "#/$defs/dns.additionals"
+                },
                 "query": {
+                    "$comment":
+                            "EVE DNS v2 style query logging; as of Suricata 8 only used in DNS records when v2 logging is enabled, not used for DNS records logged as part of an event.",
                     "type": "array",
                     "minItems": 1,
                     "items": {
@@ -1115,6 +1157,43 @@
                             "opcode": {
                                 "description": "DNS opcode as an integer",
                                 "type": "integer"
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "queries": {
+                    "$comment": "EVE DNS v3 style query logging.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "integer"
+                            },
+                            "rrname": {
+                                "type": "string"
+                            },
+                            "rrtype": {
+                                "type": "string"
+                            },
+                            "tx_id": {
+                                "type": "integer"
+                            },
+                            "type": {
+                                "type": "string"
+                            },
+                            "z": {
+                                "type": "boolean"
+                            },
+                            "opcode": {
+                                "description": "DNS opcode as an integer",
+                                "type": "integer"
+                            },
+                            "rrname_truncated": {
+                                "description": "Set to true if the rrname was too long and truncated by Suricata",
+                                "type": "boolean"
                             }
                         },
                         "additionalProperties": false
@@ -1156,6 +1235,12 @@
                         "opcode": {
                             "description": "DNS opcode as an integer",
                             "type": "integer"
+                        },
+                        "authorities": {
+                            "$ref": "#/$defs/dns.authorities"
+                        },
+                        "additionals": {
+                            "$ref": "#/$defs/dns.additionals"
                         }
                     },
                     "additionalProperties": false
@@ -1191,6 +1276,13 @@
                                 "type": "string"
                             }
                         },
+                        "NS": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "string"
+                            }
+                        },
                         "NULL": {
                             "type": "array",
                             "minItems": 1,
@@ -1203,6 +1295,13 @@
                             "minItems": 1,
                             "items": {
                                 "type": "string"
+                            }
+                        },
+                        "SOA": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "$ref": "#/$defs/dns.soa"
                             }
                         },
                         "SRV": {
@@ -1232,6 +1331,27 @@
                             "minItems": 1,
                             "items": {
                                 "type": "string"
+                            }
+                        },
+                        "SSHFP": {
+                            "description":
+                                    "A Secure Shell fingerprint is used to verify the system’s authenticity",
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "fingerprint": {
+                                        "type": "string"
+                                    },
+                                    "algo": {
+                                        "type": "integer"
+                                    },
+                                    "type": {
+                                        "type": "integer"
+                                    }
+                                },
+                                "additionalProperties": false
                             }
                         }
                     },
@@ -1324,11 +1444,34 @@
                 "body_md5": {
                     "type": "string"
                 },
+                "cc": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "date": {
                     "type": "string"
                 },
                 "from": {
                     "type": "string"
+                },
+                "has_exe_url": {
+                    "type": "boolean"
+                },
+                "has_ipv4_url": {
+                    "type": "boolean"
+                },
+                "has_ipv6_url": {
+                    "type": "boolean"
+                },
+                "received": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "status": {
                     "type": "string"
@@ -1339,8 +1482,12 @@
                 "subject_md5": {
                     "type": "string"
                 },
-                "x_mailer": {
-                    "type": "string"
+                "to": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "url": {
                     "type": "array",
@@ -1349,28 +1496,15 @@
                         "type": "string"
                     }
                 },
+                "x_mailer": {
+                    "type": "string"
+                },
                 "attachment": {
                     "type": "array",
                     "minItems": 1,
                     "items": {
                         "type": "string"
                     }
-                },
-                "to": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "string"
-                    }
-                },
-                "has_ipv6_url": {
-                    "type": "boolean"
-                },
-                "has_ipv4_url": {
-                    "type": "boolean"
-                },
-                "has_exe_url": {
-                    "type": "boolean"
                 },
                 "message_id": {
                     "type": "string"
@@ -1399,6 +1533,208 @@
             },
             "additionalProperties": false
         },
+        "enip": {
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string"
+                        },
+                        "status": {
+                            "type": "string"
+                        },
+                        "register_session": {
+                            "type": "object",
+                            "properties": {
+                                "protocol_version": {
+                                    "type": "integer"
+                                },
+                                "options": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "cip": {
+                            "type": "object",
+                            "properties": {
+                                "service": {
+                                    "type": "string"
+                                },
+                                "path": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "segment_type": {
+                                                "type": "string"
+                                            },
+                                            "value": {
+                                                "type": "integer"
+                                            }
+                                        },
+                                        "additionalProperties": false
+                                    }
+                                },
+                                "class_name": {
+                                    "type": "string"
+                                },
+                                "multiple": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "service": {
+                                                "type": "string"
+                                            },
+                                            "path": {
+                                                "type": "array",
+                                                "minItems": 1,
+                                                "items": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "segment_type": {
+                                                            "type": "string"
+                                                        },
+                                                        "value": {
+                                                            "type": "integer"
+                                                        }
+                                                    },
+                                                    "additionalProperties": false
+                                                }
+                                            },
+                                            "class_name": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "additionalProperties": false
+                                    }
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "response": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string"
+                        },
+                        "status": {
+                            "type": "string"
+                        },
+                        "register_session": {
+                            "type": "object",
+                            "properties": {
+                                "protocol_version": {
+                                    "type": "integer"
+                                },
+                                "options": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "list_services": {
+                            "type": "object",
+                            "properties": {
+                                "protocol_version": {
+                                    "type": "integer"
+                                },
+                                "capabilities": {
+                                    "type": "integer"
+                                },
+                                "service_name": {
+                                    "type": "string"
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "identity": {
+                            "type": "object",
+                            "properties": {
+                                "protocol_version": {
+                                    "type": "integer"
+                                },
+                                "revision": {
+                                    "type": "string"
+                                },
+                                "vendor_id": {
+                                    "type": "string"
+                                },
+                                "device_type": {
+                                    "type": "string"
+                                },
+                                "product_code": {
+                                    "type": "integer"
+                                },
+                                "status": {
+                                    "type": "integer"
+                                },
+                                "serial": {
+                                    "type": "integer"
+                                },
+                                "product_name": {
+                                    "type": "string"
+                                },
+                                "state": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "cip": {
+                            "type": "object",
+                            "properties": {
+                                "service": {
+                                    "type": "string"
+                                },
+                                "status": {
+                                    "type": "string"
+                                },
+                                "status_extended": {
+                                    "type": "string"
+                                },
+                                "status_extended_meaning": {
+                                    "type": "string"
+                                },
+                                "multiple": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "service": {
+                                                "type": "string"
+                                            },
+                                            "status": {
+                                                "type": "string"
+                                            },
+                                            "status_extended": {
+                                                "type": "string"
+                                            },
+                                            "status_extended_meaning": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "additionalProperties": false
+                                    }
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        },
         "ether": {
             "type": "object",
             "properties": {
@@ -1407,6 +1743,10 @@
                 },
                 "src_mac": {
                     "type": "string"
+                },
+                "ether_type": {
+                    "type": "integer",
+                    "description": "Ethernet type value "
                 },
                 "dest_macs": {
                     "type": "array",
@@ -1552,6 +1892,9 @@
                 },
                 "state": {
                     "type": "string"
+                },
+                "wrong_thread": {
+                    "type": "boolean"
                 }
             },
             "additionalProperties": false
@@ -1684,6 +2027,10 @@
                 "status": {
                     "type": "integer"
                 },
+                "status_string": {
+                    "description": "status string when it is not a valid integer (like 2XX)",
+                    "type": "string"
+                },
                 "true_client_ip": {
                     "type": "string"
                 },
@@ -1770,6 +2117,9 @@
                                 "priority": {
                                     "type": "integer"
                                 },
+                                "has_multiple": {
+                                    "type": "string"
+                                },
                                 "settings": {
                                     "type": "array",
                                     "minItems": 1,
@@ -1793,6 +2143,9 @@
                             "type": "object",
                             "properties": {
                                 "error_code": {
+                                    "type": "string"
+                                },
+                                "has_multiple": {
                                     "type": "string"
                                 },
                                 "settings": {
@@ -2055,6 +2408,366 @@
                 }
             },
             "additionalProperties": false
+        },
+        "ldap": {
+            "type": "object",
+            "optional": true,
+            "properties": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string"
+                        },
+                        "message_id": {
+                            "type": "integer"
+                        },
+                        "search_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "base_object": {
+                                    "type": "string"
+                                },
+                                "scope": {
+                                    "type": "integer"
+                                },
+                                "deref_alias": {
+                                    "type": "integer"
+                                },
+                                "size_limit": {
+                                    "type": "integer"
+                                },
+                                "time_limit": {
+                                    "type": "integer"
+                                },
+                                "types_online": {
+                                    "type": "boolean"
+                                },
+                                "attributes": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        },
+                        "bind_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "version": {
+                                    "type": "integer"
+                                },
+                                "name": {
+                                    "type": "string"
+                                },
+                                "sasl": {
+                                    "type": "object",
+                                    "optional": "true",
+                                    "properties": {
+                                        "mechanism": {
+                                            "type": "string"
+                                        },
+                                        "credentials": {
+                                            "type": "string",
+                                            "optional": "true"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "modify_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "object": {
+                                    "type": "string"
+                                },
+                                "changes": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "operation": {
+                                                "type": "string"
+                                            },
+                                            "modification": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "attribute_type": {
+                                                        "type": "string"
+                                                    },
+                                                    "attribute_values": {
+                                                        "type": "array",
+                                                        "minItems": 1,
+                                                        "items": {
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "add_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "entry": {
+                                    "type": "string"
+                                },
+                                "attributes": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {
+                                                "type": "string"
+                                            },
+                                            "values": {
+                                                "type": "array",
+                                                "minItems": 1,
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "del_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "dn": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "mod_dn_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "entry": {
+                                    "type": "string"
+                                },
+                                "new_rdn": {
+                                    "type": "string"
+                                },
+                                "delete_old_rdn": {
+                                    "type": "boolean"
+                                },
+                                "new_superior": {
+                                    "type": "string",
+                                    "optional": "true"
+                                }
+                            }
+                        },
+                        "compare_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "entry": {
+                                    "type": "string"
+                                },
+                                "attribute_value_assertion": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {
+                                            "type": "string"
+                                        },
+                                        "value": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "abandon_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "message_id": {
+                                    "type": "integer"
+                                }
+                            }
+                        },
+                        "extended_request": {
+                            "type": "object",
+                            "optional": "true",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "value": {
+                                    "type": "string",
+                                    "optional": "true"
+                                }
+                            }
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "responses": {
+                    "type": "array",
+                    "optional": "true",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "search_result_done": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "bind_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    },
+                                    "server_sasl_creds": {
+                                        "type": "string",
+                                        "optional": "true"
+                                    }
+                                }
+                            },
+                            "modify_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "add_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "del_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "mod_dn_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "compare_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "extended_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "result_code": {
+                                        "type": "string"
+                                    },
+                                    "matched_dn": {
+                                        "type": "string"
+                                    },
+                                    "message": {
+                                        "type": "string"
+                                    },
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "value": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "intermediate_response": {
+                                "type": "object",
+                                "optional": "true",
+                                "properties": {
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "value": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         },
         "metadata": {
             "type": "object",
@@ -3055,6 +3768,9 @@
                     },
                     "additionalProperties": false
                 },
+                "ja4": {
+                    "type": "string"
+                },
                 "sni": {
                     "description": "Server Name Indication",
                     "type": "string"
@@ -3304,6 +4020,141 @@
                 },
                 "version": {
                     "type": "string"
+                },
+                "sdp": {
+                    "type": "object",
+                    "description": "SDP message body",
+                    "optional": true,
+                    "properties": {
+                        "version": {
+                            "type": "integer",
+                            "description": "SDP protocol version"
+                        },
+                        "origin": {
+                            "type": "string",
+                            "description": "Owner of the session"
+                        },
+                        "session_name": {
+                            "type": "string",
+                            "description": "Session name"
+                        },
+                        "session_info": {
+                            "type": "string",
+                            "optional": true,
+                            "description": "Textual information about the session"
+                        },
+                        "uri": {
+                            "type": "string",
+                            "optional": true,
+                            "description": "A pointer to additional information about the session"
+                        },
+                        "email": {
+                            "type": "string",
+                            "optional": true,
+                            "description":
+                                    "Email address for the person responsible for the conference"
+                        },
+                        "phone_number": {
+                            "type": "string",
+                            "optional": true,
+                            "description":
+                                    "Phone number for the person responsible for the conference"
+                        },
+                        "connection_data": {
+                            "type": "string",
+                            "optional": true,
+                            "description": "Connection data"
+                        },
+                        "bandwidths": {
+                            "type": "array",
+                            "optional": true,
+                            "description": "Proposed bandwidths to be used by the session or media",
+                            "minItems": 1,
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "time": {
+                            "type": "string",
+                            "optional": true,
+                            "description": "Start and stop times for a session"
+                        },
+                        "repeat_time": {
+                            "type": "string",
+                            "optional": true,
+                            "description": "Specify repeat times for a session"
+                        },
+                        "timezone": {
+                            "type": "string",
+                            "optional": true,
+                            "description":
+                                    "Timezone to specify adjustments for times and offsets from the base time"
+                        },
+                        "encryption_key": {
+                            "type": "string",
+                            "optional": true,
+                            "description":
+                                    "Field used to convey encryption keys if SDP is used over a secure channel"
+                        },
+                        "attributes": {
+                            "type": "array",
+                            "optional": true,
+                            "description": "A list of attributes to extend SDP",
+                            "minItems": 1,
+                            "items": {
+                                "type": "string",
+                                "description": "Attribute's name and value"
+                            }
+                        },
+                        "media_descriptions": {
+                            "type": "array",
+                            "description": "A list of media descriptions for a session",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "optional": true,
+                                "properties": {
+                                    "media": {
+                                        "type": "string",
+                                        "description": "Media description"
+                                    },
+                                    "media_info": {
+                                        "type": "string",
+                                        "optional": true,
+                                        "description":
+                                                "Media information primarily intended for labelling media streams"
+                                    },
+                                    "bandwidths": {
+                                        "type": "array",
+                                        "optional": true,
+                                        "description": "A list of bandwidth proposed for a media",
+                                        "minItems": 1,
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "connection_data": {
+                                        "type": "string",
+                                        "optional": true,
+                                        "description": "Connection data per media description"
+                                    },
+                                    "attributes": {
+                                        "type": "array",
+                                        "description":
+                                                "A list of attributes specified for a media description",
+                                        "optional": true,
+                                        "minItems": 1,
+                                        "items": {
+                                            "type": "string",
+                                            "description": "Attribute's name and value"
+                                        }
+                                    }
+                                },
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "additionalProperties": false
                 }
             },
             "additionalProperties": false
@@ -3712,126 +4563,200 @@
             "optional": true,
             "properties": {
                 "uptime": {
+                    "description": "Suricata engine's uptime",
                     "type": "integer"
                 },
-                "memcap_pressure": {
-                    "type": "integer"
-                },
-                "memcap_pressure_max": {
-                    "type": "integer"
+                "capture": {
+                    "type": "object",
+                    "properties": {
+                        "kernel_packets": {
+                            "type": "integer"
+                        },
+                        "kernel_drops": {
+                            "type": "integer"
+                        },
+                        "kernel_ifdrops": {
+                            "type": "integer"
+                        }
+                    }
                 },
                 "app_layer": {
                     "type": "object",
                     "properties": {
                         "expectations": {
+                            "description": "Expectation (dynamic parallel flow) counter",
                             "type": "integer"
                         },
                         "error": {
                             "type": "object",
                             "properties": {
+                                "exception_policy": {
+                                    "description":
+                                            "Consolidated stats on how many times app-layer error exception policy was applied, and which one",
+                                    "$ref": "#/$defs/exceptionPolicy"
+                                },
                                 "bittorrent-dht": {
+                                    "description":
+                                            "Errors encountered parsing BitTorrent DHT protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dcerpc_tcp": {
+                                    "description": "Errors encountered parsing DCERPC/TCP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dcerpc_udp": {
+                                    "description": "Errors encountered parsing DCERPC/UDP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dhcp": {
+                                    "description": "Errors encountered parsing DHCP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dnp3": {
+                                    "description": "Errors encountered parsing DNP3",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dns_tcp": {
+                                    "description": "Errors encountered parsing DNS/TCP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "dns_udp": {
+                                    "description": "Errors encountered parsing DNS/UDP protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "doh2": {
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "enip_tcp": {
+                                    "description": "Errors encounterd parsing ENIP/TCP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "enip_udp": {
+                                    "description": "Errors encountered parsing ENIP/UDP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "failed_tcp": {
+                                    "description": "Errors encountered parsing TCP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "ftp": {
+                                    "description": "Errors encountered parsing FTP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "ftp-data": {
+                                    "description": "Errors encountered parsing FTP data",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "http": {
+                                    "description": "Errors encountered parsing HTTP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "http2": {
+                                    "description": "Errors encountered parsing HTTP/2",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "ike": {
+                                    "description": "Errors encountered parsing IKE protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "imap": {
+                                    "description": "Errors encountered parsing IMAP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "krb5_tcp": {
+                                    "description":
+                                            "Errors encountered parsing Kerberos v5/TCP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "krb5_udp": {
+                                    "description":
+                                            "Errors encountered parsing Kerberos v5/UDP protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "ldap_tcp": {
+                                    "description": "Errors encountered parsing LDAP/TCP protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "ldap_udp": {
+                                    "description": "Errors encountered parsing LDAP/UDP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "modbus": {
+                                    "description": "Errors encountered parsing Modbus protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "mqtt": {
+                                    "description": "Errors encountered parsing MQTT protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "nfs_tcp": {
+                                    "description": "Errors encountered parsing NFS/TCP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "nfs_udp": {
+                                    "description": "Errors encountered parsing NFS/UDP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "ntp": {
+                                    "description": "Errors encountered parsing NTP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "pgsql": {
+                                    "description": "Errors encountered parsing PostgreSQL protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "pop3": {
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "quic": {
+                                    "description": "Errors encountered parsing QUIC protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "rdp": {
+                                    "description": "Errors encountered parsing RDP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "rfb": {
+                                    "description": "Errors encountered parsing RFB protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
-                                "sip": {
+                                "sip_udp": {
+                                    "description": "Errors encountered parsing SIP/UDP protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "sip_tcp": {
+                                    "description": "Errors encountered parsing SIP/TCP protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "smb": {
+                                    "description": "Errors encountered parsing SMB protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "smtp": {
+                                    "description": "Errors encountered parsing SMTP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "snmp": {
+                                    "description": "Errors encountered parsing SNMP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "ssh": {
+                                    "description": "Errors encountered parsing SSH protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "telnet": {
+                                    "description": "Errors encountered parsing Telnet protocol",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "tftp": {
+                                    "description": "Errors encountered parsing TFTP",
                                     "$ref": "#/$defs/stats_applayer_error"
                                 },
                                 "tls": {
+                                    "description": "Errors encountered parsing TLS protocol",
+                                    "$ref": "#/$defs/stats_applayer_error"
+                                },
+                                "websocket": {
                                     "$ref": "#/$defs/stats_applayer_error"
                                 }
                             },
@@ -3841,114 +4766,172 @@
                             "type": "object",
                             "properties": {
                                 "bittorrent-dht": {
+                                    "description": "Number of flows for BitTorrent DHT protocol",
                                     "type": "integer"
                                 },
                                 "dcerpc_tcp": {
+                                    "description": "Number of flows for DCERPC/TCP protocol",
                                     "type": "integer"
                                 },
                                 "dcerpc_udp": {
+                                    "description": "Number of flows for DCERPC/UDP protocol",
                                     "type": "integer"
                                 },
                                 "dhcp": {
+                                    "description": "Number of flows for DHCP",
                                     "type": "integer"
                                 },
                                 "dnp3": {
+                                    "description": "Number of flows for DNP3",
                                     "type": "integer"
                                 },
                                 "dns_tcp": {
+                                    "description": "Number of flows for DNS/TCP protocol",
                                     "type": "integer"
                                 },
                                 "dns_udp": {
+                                    "description": "Number of flows for DNS/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "doh2": {
                                     "type": "integer"
                                 },
                                 "enip_tcp": {
+                                    "description": "Number of flows for ENIP/TCP",
                                     "type": "integer"
                                 },
                                 "enip_udp": {
+                                    "description": "Number of flows for ENIP/UDP",
                                     "type": "integer"
                                 },
                                 "failed_tcp": {
+                                    "description": "Number of failed flows for TCP",
                                     "type": "integer"
                                 },
                                 "failed_udp": {
+                                    "description": "Number of failed flows for UDP",
                                     "type": "integer"
                                 },
                                 "ftp": {
+                                    "description": "Number of flows for FTP",
                                     "type": "integer"
                                 },
                                 "ftp-data": {
+                                    "description": "Number of flows for FTP data protocol",
                                     "type": "integer"
                                 },
                                 "http": {
+                                    "description": "Number of flows for HTTP",
                                     "type": "integer"
                                 },
                                 "http2": {
+                                    "description": "Number of flows for HTTP/2",
                                     "type": "integer"
                                 },
                                 "ike": {
+                                    "description": "Number of flows for IKE protocol",
                                     "type": "integer"
                                 },
                                 "ikev2": {
+                                    "description": "Number of flows for IKE v2 protocol",
                                     "type": "integer"
                                 },
                                 "imap": {
+                                    "description": "Number of flows for IMAP",
                                     "type": "integer"
                                 },
                                 "krb5_tcp": {
+                                    "description": "Number of flows for Kerberos v5/TCP protocol",
                                     "type": "integer"
                                 },
                                 "krb5_udp": {
+                                    "description": "Number of flows for Kerberos v5/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "ldap_tcp": {
+                                    "description": "Number of flows for LDAP/TCP protocol",
+                                    "type": "integer"
+                                },
+                                "ldap_udp": {
+                                    "description": "Number of flows LDAP/UDP protocol",
                                     "type": "integer"
                                 },
                                 "modbus": {
+                                    "description": "Number of flows for Modbus protocol",
                                     "type": "integer"
                                 },
                                 "mqtt": {
+                                    "description": "Number of flows for MQTT protocol",
                                     "type": "integer"
                                 },
                                 "nfs_tcp": {
+                                    "description": "Number of flows for NFS/TCP protocol",
                                     "type": "integer"
                                 },
                                 "nfs_udp": {
+                                    "description": "Number of flows for NFS/UDP protocol",
                                     "type": "integer"
                                 },
                                 "ntp": {
+                                    "description": "Number of flows for NTP",
                                     "type": "integer"
                                 },
                                 "pgsql": {
+                                    "description": "Number of flows for PostgreSQL protocol",
+                                    "type": "integer"
+                                },
+                                "pop3": {
                                     "type": "integer"
                                 },
                                 "quic": {
+                                    "description": "Number of flows for QUIC protocol",
                                     "type": "integer"
                                 },
                                 "rdp": {
+                                    "description": "Number of flows for RDP",
                                     "type": "integer"
                                 },
                                 "rfb": {
+                                    "description": "Number of flows for RFB protocol",
                                     "type": "integer"
                                 },
-                                "sip": {
+                                "sip_udp": {
+                                    "description": "Number of flows for SIP/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "sip_tcp": {
+                                    "description": "Number of flows for SIP/TCP protocol",
                                     "type": "integer"
                                 },
                                 "smb": {
+                                    "description": "Number of flows for SMB protocol",
                                     "type": "integer"
                                 },
                                 "smtp": {
+                                    "description": "Number of flows for SMTP",
                                     "type": "integer"
                                 },
                                 "snmp": {
+                                    "description": "Number of flows for SNMP",
                                     "type": "integer"
                                 },
                                 "ssh": {
+                                    "description": "Number of flows for SSH protocol",
                                     "type": "integer"
                                 },
                                 "telnet": {
+                                    "description": "Number of flows for Telnet protocol",
                                     "type": "integer"
                                 },
                                 "tftp": {
+                                    "description": "Number of flows for TFTP",
                                     "type": "integer"
                                 },
                                 "tls": {
+                                    "description": "Number of flows for TLS protocol",
+                                    "type": "integer"
+                                },
+                                "websocket": {
                                     "type": "integer"
                                 }
                             },
@@ -3958,108 +4941,167 @@
                             "type": "object",
                             "properties": {
                                 "bittorrent-dht": {
+                                    "description":
+                                            "Number of transactions for BitTorrent DHT protocol",
                                     "type": "integer"
                                 },
                                 "dcerpc_tcp": {
+                                    "description": "Number of transactions for DCERPC/TCP protocol",
                                     "type": "integer"
                                 },
                                 "dcerpc_udp": {
+                                    "description": "Number of transactions for DCERPC/UDP protocol",
                                     "type": "integer"
                                 },
                                 "dhcp": {
+                                    "description": "Number of transactions for DHCP",
                                     "type": "integer"
                                 },
                                 "dnp3": {
+                                    "description": "Number of transactions for DNP3",
                                     "type": "integer"
                                 },
                                 "dns_tcp": {
+                                    "description": "Number of transactions for DNS/TCP protocol",
                                     "type": "integer"
                                 },
                                 "dns_udp": {
+                                    "description": "Number of transactions for DNS/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "doh2": {
                                     "type": "integer"
                                 },
                                 "enip_tcp": {
+                                    "description": "Number of transactions for ENIP/TCP",
                                     "type": "integer"
                                 },
                                 "enip_udp": {
+                                    "description": "Number of transactions for ENIP/UDP",
                                     "type": "integer"
                                 },
                                 "ftp": {
+                                    "description": "Number of transactions for FTP",
                                     "type": "integer"
                                 },
                                 "ftp-data": {
+                                    "description": "Number of transactions for FTP data protocol",
                                     "type": "integer"
                                 },
                                 "http": {
+                                    "description": "Number of transactions for HTTP",
                                     "type": "integer"
                                 },
                                 "http2": {
+                                    "description": "Number of transactions for HTTP/2",
                                     "type": "integer"
                                 },
                                 "ike": {
+                                    "description": "Number of transactions for IKE protocol",
                                     "type": "integer"
                                 },
                                 "ikev2": {
+                                    "description": "Number of transactions for IKE v2 protocol",
                                     "type": "integer"
                                 },
                                 "imap": {
+                                    "description": "Number of transactions for IMAP",
                                     "type": "integer"
                                 },
                                 "krb5_tcp": {
+                                    "description":
+                                            "Number of transactions for Kerberos v5/TCP protocol",
                                     "type": "integer"
                                 },
                                 "krb5_udp": {
+                                    "description":
+                                            "Number of transactions for Kerberos v5/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "ldap_tcp": {
+                                    "description": "Number of transactions for LDAP/TCP protocol",
+                                    "type": "integer"
+                                },
+                                "ldap_udp": {
+                                    "description": "Number of transactions for LDAP/UDP protocol",
                                     "type": "integer"
                                 },
                                 "modbus": {
+                                    "description": "Number of transactions for Modbus protocol",
                                     "type": "integer"
                                 },
                                 "mqtt": {
+                                    "description": "Number of transactions for MQTT protocol",
                                     "type": "integer"
                                 },
                                 "nfs_tcp": {
+                                    "description": "Number of transactions for NFS/TCP protocol",
                                     "type": "integer"
                                 },
                                 "nfs_udp": {
+                                    "description": "Number of transactions for NFS/UDP protocol",
                                     "type": "integer"
                                 },
                                 "ntp": {
+                                    "description": "Number of transactions for NTP",
                                     "type": "integer"
                                 },
                                 "pgsql": {
+                                    "description": "Number of transactions for PostgreSQL protocol",
+                                    "type": "integer"
+                                },
+                                "pop3": {
                                     "type": "integer"
                                 },
                                 "quic": {
+                                    "description": "Number of transactions for QUIC protocol",
                                     "type": "integer"
                                 },
                                 "rdp": {
+                                    "description": "Number of transactions for RDP",
                                     "type": "integer"
                                 },
                                 "rfb": {
+                                    "description": "Number of transactions for RFB protocol",
                                     "type": "integer"
                                 },
-                                "sip": {
+                                "sip_udp": {
+                                    "description": "Number of transactions for SIP/UDP protocol",
+                                    "type": "integer"
+                                },
+                                "sip_tcp": {
+                                    "description": "Number of transactions for SIP/TCP protocol",
                                     "type": "integer"
                                 },
                                 "smb": {
+                                    "description": "Number of transactions for SMB protocol",
                                     "type": "integer"
                                 },
                                 "smtp": {
+                                    "description": "Number of transactions for SMTP",
                                     "type": "integer"
                                 },
                                 "snmp": {
+                                    "description": "Number of transactions for SNMP",
                                     "type": "integer"
                                 },
                                 "ssh": {
+                                    "description": "Number of transactions for SSH protocol",
                                     "type": "integer"
                                 },
                                 "telnet": {
+                                    "description": "Number of transactions for Telnet protocol",
                                     "type": "integer"
                                 },
                                 "tftp": {
+                                    "description": "Number of transactions for TFTP",
                                     "type": "integer"
                                 },
                                 "tls": {
+                                    "description": "Number of transactions for TLS protocol",
+                                    "type": "integer"
+                                },
+                                "websocket": {
                                     "type": "integer"
                                 }
                             },
@@ -4072,63 +5114,101 @@
                     "type": "object",
                     "properties": {
                         "accepted": {
+                            "description": "Number of accepted packets",
                             "type": "integer"
                         },
                         "blocked": {
+                            "description": "Number of blocked packets",
                             "type": "integer"
                         },
                         "rejected": {
+                            "description": "Number of rejected packets",
                             "type": "integer"
                         },
                         "replaced": {
+                            "description": "Number of replaced packets",
                             "type": "integer"
                         },
                         "drop_reason": {
+                            "description": "Number of dropped packets, grouped by drop reason",
                             "type": "object",
                             "properties": {
                                 "decode_error": {
+                                    "description":
+                                            "Number of packets dropped due to decoding errors",
                                     "type": "integer"
                                 },
                                 "defrag_error": {
+                                    "description":
+                                            "Number of packets dropped due to defragmentation errors",
                                     "type": "integer"
                                 },
                                 "defrag_memcap": {
+                                    "description":
+                                            "Number of packets dropped due to defrag memcap exception policy",
                                     "type": "integer"
                                 },
                                 "flow_memcap": {
+                                    "description":
+                                            "Number of packets dropped due to flow memcap exception policy",
                                     "type": "integer"
                                 },
                                 "flow_drop": {
+                                    "description": "Number of packets dropped due to dropped flows",
                                     "type": "integer"
                                 },
                                 "applayer_error": {
+                                    "description":
+                                            "Number of packets dropped due to app-layer error exception policy",
                                     "type": "integer"
                                 },
                                 "applayer_memcap": {
+                                    "description":
+                                            "Number of packets dropped due to applayer memcap",
                                     "type": "integer"
                                 },
                                 "rules": {
+                                    "description": "Number of packets dropped due to rule actions",
                                     "type": "integer"
                                 },
                                 "threshold_detection_filter": {
+                                    "description":
+                                            "Number of packets dropped due to threshold detection filter",
                                     "type": "integer"
                                 },
                                 "stream_error": {
+                                    "description":
+                                            "Number of packets dropped due to invalid TCP stream",
                                     "type": "integer"
                                 },
                                 "stream_memcap": {
+                                    "description":
+                                            "Number of packets dropped due to stream memcap exception policy",
                                     "type": "integer"
                                 },
                                 "stream_midstream": {
+                                    "description":
+                                            "Number of packets dropped due to stream midstream exception policy",
                                     "type": "integer"
                                 },
                                 "stream_reassembly": {
+                                    "description":
+                                            "Number of packets dropped due to stream reassembly exception policy",
+                                    "type": "integer"
+                                },
+                                "stream_urgent": {
+                                    "description":
+                                            "Number of packets dropped due to TCP urgent flag",
                                     "type": "integer"
                                 },
                                 "nfq_error": {
+                                    "description":
+                                            "Number of packets dropped due to no NFQ verdict",
                                     "type": "integer"
                                 },
                                 "tunnel_packet_drop": {
+                                    "description":
+                                            "Number of packets dropped due to inner tunnel packet being dropped",
                                     "type": "integer"
                                 }
                             },
@@ -4260,6 +5340,33 @@
                         "event": {
                             "type": "object",
                             "properties": {
+                                "arp": {
+                                    "type": "object",
+                                    "properties": {
+                                        "pkt_too_small": {
+                                            "type": "integer"
+                                        },
+                                        "unsupported_hardware": {
+                                            "type": "integer"
+                                        },
+                                        "unsupported_protocol": {
+                                            "type": "integer"
+                                        },
+                                        "unsupported_pkt": {
+                                            "type": "integer"
+                                        },
+                                        "invalid_hardware_size": {
+                                            "type": "integer"
+                                        },
+                                        "invalid_protocol_size": {
+                                            "type": "integer"
+                                        },
+                                        "unsupported_opcode": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "additionalProperties": false
+                                },
                                 "chdlc": {
                                     "type": "object",
                                     "properties": {
@@ -4306,6 +5413,9 @@
                                     "type": "object",
                                     "properties": {
                                         "pkt_too_small": {
+                                            "type": "integer"
+                                        },
+                                        "unknown_ethertype": {
                                             "type": "integer"
                                         }
                                     },
@@ -4794,8 +5904,34 @@
                 "defrag": {
                     "type": "object",
                     "properties": {
-                        "max_frag_hits": {
-                            "type": "integer"
+                        "tracker_soft_reuse": {
+                            "type": "integer",
+                            "description":
+                                    "Finished tracker re-used from hash table before being moved to spare pool"
+                        },
+                        "tracker_hard_reuse": {
+                            "type": "integer",
+                            "description":
+                                    "Active tracker force closed before completion and reused for new tracker"
+                        },
+                        "max_trackers_reached": {
+                            "type": "integer",
+                            "description":
+                                    "How many times a packet wasn't reassembled due to max-trackers limit being reached"
+                        },
+                        "max_frags_reached": {
+                            "type": "integer",
+                            "description":
+                                    "How many times a fragment wasn't stored due to max-frags limit being reached"
+                        },
+                        "memuse": {
+                            "type": "integer",
+                            "description": "Current memory use."
+                        },
+                        "memcap_exception_policy": {
+                            "description":
+                                    "How many times defrag memcap exception policy was applied, and which one",
+                            "$ref": "#/$defs/exceptionPolicy"
                         },
                         "ipv4": {
                             "type": "object",
@@ -4826,6 +5962,24 @@
                                 }
                             },
                             "additionalProperties": false
+                        },
+                        "mgr": {
+                            "type": "object",
+                            "properties": {
+                                "tracker_timeout": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
+                        },
+                        "wrk": {
+                            "type": "object",
+                            "properties": {
+                                "tracker_timeout": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
                         }
                     },
                     "additionalProperties": false
@@ -4841,6 +5995,30 @@
                         },
                         "alerts_suppressed": {
                             "type": "integer"
+                        },
+                        "lua": {
+                            "type": "object",
+                            "properties": {
+                                "blocked_function_errors": {
+                                    "description":
+                                            "Counter for Lua scripts failing due to blocked functions being called",
+                                    "type": "integer"
+                                },
+                                "instruction_limit_errors": {
+                                    "description":
+                                            "Count of Lua rules exceeding the instruction limit",
+                                    "type": "integer"
+                                },
+                                "memory_limit_errors": {
+                                    "description": "Count of Lua rules exceeding the memory limit",
+                                    "type": "integer"
+                                },
+                                "errors": {
+                                    "description": "Errors encountered while running Lua scripts",
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
                         },
                         "mpm_list": {
                             "type": "integer"
@@ -4901,54 +6079,82 @@
                     "type": "object",
                     "properties": {
                         "active": {
+                            "description": "Number of currently active flows",
                             "type": "integer"
                         },
                         "emerg_mode_entered": {
+                            "description": "Number of times emergency mode was entered",
                             "type": "integer"
                         },
                         "emerg_mode_over": {
+                            "description": "Number of times recovery was made from emergency mode",
                             "type": "integer"
                         },
                         "get_used": {
+                            "description":
+                                    "Number of reused flows from the hash table in case memcap was reached and spare pool was empty",
                             "type": "integer"
                         },
                         "get_used_eval": {
+                            "description":
+                                    "Number of attempts at getting a flow directly from the hash",
                             "type": "integer"
                         },
                         "get_used_eval_busy": {
+                            "description":
+                                    "Number of times a flow was found in the hash but the lock for hash bucket could not be obtained",
                             "type": "integer"
                         },
                         "get_used_eval_reject": {
+                            "description":
+                                    "Number of flows that were evaluated but rejected from reuse as they were still alive/active",
                             "type": "integer"
                         },
                         "get_used_failed": {
+                            "description":
+                                    "Number of times retrieval of flow from hash was attempted but was unsuccessful",
                             "type": "integer"
                         },
                         "icmpv4": {
+                            "description": "Number of ICMPv4 flows",
                             "type": "integer"
                         },
                         "icmpv6": {
+                            "description": "Number of ICMPv6 flows",
                             "type": "integer"
                         },
                         "memcap": {
+                            "description": "Number of times memcap was reached for flows",
                             "type": "integer"
                         },
+                        "memcap_exception_policy": {
+                            "description":
+                                    "How many times flow memcap exception policy was applied, and which one",
+                            "$ref": "#/$defs/exceptionPolicy"
+                        },
                         "memuse": {
+                            "description": "Memory currently in use by the flows",
                             "type": "integer"
                         },
                         "spare": {
+                            "description": "Number of flows in the spare pool",
                             "type": "integer"
                         },
                         "tcp": {
+                            "description": "Number of TCP flows",
                             "type": "integer"
                         },
                         "tcp_reuse": {
+                            "description":
+                                    "Number of TCP flows that were reused as they seemed to share the same flow tuple",
                             "type": "integer"
                         },
                         "total": {
+                            "description": "Total number of flows",
                             "type": "integer"
                         },
                         "udp": {
+                            "description": "Number of UDP flows",
                             "type": "integer"
                         },
                         "end": {
@@ -5024,27 +6230,39 @@
                             "type": "object",
                             "properties": {
                                 "flows_checked": {
+                                    "description":
+                                            "number of flows checked for timeout in the last pass",
                                     "type": "integer"
                                 },
                                 "flows_evicted": {
+                                    "description": "number of flows that were evicted",
                                     "type": "integer"
                                 },
                                 "flows_evicted_needs_work": {
+                                    "description":
+                                            "number of TCP flows that were returned to the workers in case reassembly, detection, logging still needs work",
                                     "type": "integer"
                                 },
                                 "flows_notimeout": {
+                                    "description": "number of flows that did not time out",
                                     "type": "integer"
                                 },
                                 "flows_timeout": {
+                                    "description": "number of flows that reached the time out",
                                     "type": "integer"
                                 },
                                 "full_hash_pass": {
+                                    "description":
+                                            "number of times a full pass of the hash table was done",
                                     "type": "integer"
                                 },
                                 "rows_maxlen": {
+                                    "description": "size of the biggest row in the hash table",
                                     "type": "integer"
                                 },
                                 "rows_per_sec": {
+                                    "description":
+                                            "number of rows to be scanned every second by a worker",
                                     "type": "integer"
                                 }
                             },
@@ -5054,12 +6272,15 @@
                             "type": "object",
                             "properties": {
                                 "recycled": {
+                                    "description": "number of recycled flows",
                                     "type": "integer"
                                 },
                                 "queue_avg": {
+                                    "description": "average number of recycled flows per queue",
                                     "type": "integer"
                                 },
                                 "queue_max": {
+                                    "description": "maximum number of recycled flows per queue",
                                     "type": "integer"
                                 }
                             },
@@ -5173,6 +6394,21 @@
                     },
                     "additionalProperties": false
                 },
+                "memcap": {
+                    "type": "object",
+                    "properties": {
+                        "pressure": {
+                            "description":
+                                    "Percentage of memcaps used by flow, stream, stream-reassembly and app-layer-http",
+                            "type": "integer"
+                        },
+                        "pressure_max": {
+                            "description": "Maximum pressure seen by the engine",
+                            "type": "integer"
+                        }
+                    },
+                    "additionalProperties": false
+                },
                 "ftp": {
                     "type": "object",
                     "properties": {
@@ -5186,6 +6422,42 @@
                     "additionalProperties": false
                 },
                 "http": {
+                    "type": "object",
+                    "properties": {
+                        "memcap": {
+                            "type": "integer"
+                        },
+                        "memuse": {
+                            "type": "integer"
+                        },
+                        "byterange": {
+                            "type": "object",
+                            "properties": {
+                                "memcap": {
+                                    "type": "integer"
+                                },
+                                "memuse": {
+                                    "type": "integer"
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "host": {
+                    "type": "object",
+                    "properties": {
+                        "memcap": {
+                            "type": "integer"
+                        },
+                        "memuse": {
+                            "type": "integer"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "ippair": {
                     "type": "object",
                     "properties": {
                         "memcap": {
@@ -5224,6 +6496,11 @@
                         "midstream_pickups": {
                             "type": "integer"
                         },
+                        "midstream_exception_policy": {
+                            "description":
+                                    "How many times midstream exception policy was applied, and which one",
+                            "$ref": "#/$defs/exceptionPolicy"
+                        },
                         "no_flow": {
                             "type": "integer"
                         },
@@ -5239,8 +6516,10 @@
                         "pseudo": {
                             "type": "integer"
                         },
-                        "pseudo_failed": {
-                            "type": "integer"
+                        "reassembly_exception_policy": {
+                            "description":
+                                    "How many times reassembly memcap exception policy was applied, and which one",
+                            "$ref": "#/$defs/exceptionPolicy"
                         },
                         "reassembly_gap": {
                             "type": "integer"
@@ -5272,6 +6551,11 @@
                         "ssn_memcap_drop": {
                             "type": "integer"
                         },
+                        "ssn_memcap_exception_policy": {
+                            "description":
+                                    "How many times session memcap exception policy was applied, and which one",
+                            "$ref": "#/$defs/exceptionPolicy"
+                        },
                         "stream_depth_reached": {
                             "type": "integer"
                         },
@@ -5279,6 +6563,14 @@
                             "type": "integer"
                         },
                         "synack": {
+                            "type": "integer"
+                        },
+                        "urg": {
+                            "description": "Number of TCP packets with the urgent flag set",
+                            "type": "integer"
+                        },
+                        "urgent_oob_data": {
+                            "description": "Number of OOB bytes tracked in TCP urgent handling",
                             "type": "integer"
                         }
                     },
@@ -5320,6 +6612,10 @@
                 "tc_max_regions": {
                     "type": "integer"
                 },
+                "tc_urgent_oob_data": {
+                    "description": "Number of Out-of-Band bytes sent by server using TCP urgent packets",
+                    "type": "integer"
+                },
                 "tcp_flags": {
                     "type": "string"
                 },
@@ -5333,6 +6629,10 @@
                     "type": "boolean"
                 },
                 "ts_max_regions": {
+                    "type": "integer"
+                },
+                "ts_urgent_oob_data": {
+                    "description": "Number of Out-of-Band bytes sent by client using TCP urgent packets",
                     "type": "integer"
                 },
                 "urg": {
@@ -5371,14 +6671,41 @@
         "tls": {
             "type": "object",
             "properties": {
+                "certificate": {
+                    "type": "string"
+                },
+                "chain": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "client": {
                     "type": "object",
                     "properties": {
+                        "certificate": {
+                            "type": "string"
+                        },
+                        "chain": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "string"
+                            }
+                        },
                         "fingerprint": {
                             "type": "string"
                         },
                         "issuerdn": {
                             "type": "string"
+                        },
+                        "subjectaltname": {
+                            "description": "TLS Subject Alternative Name field",
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
                         },
                         "notafter": {
                             "$ref": "#/$defs/tls_date"
@@ -5395,6 +6722,20 @@
                     },
                     "additionalProperties": false
                 },
+                "client_alpns": {
+                    "description": "TLS client ALPN field(s)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "server_alpns": {
+                    "description": "TLS server ALPN field(s)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "fingerprint": {
                     "type": "string"
                 },
@@ -5403,6 +6744,13 @@
                 },
                 "issuerdn": {
                     "type": "string"
+                },
+                "subjectaltname": {
+                    "description": "TLS Subject Alternative Name field",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "notafter": {
                     "$ref": "#/$defs/tls_date"
@@ -5448,6 +6796,9 @@
                         }
                     },
                     "additionalProperties": false
+                },
+                "ja4": {
+                    "type": "string"
                 }
             },
             "additionalProperties": false
@@ -5501,23 +6852,155 @@
                 }
             },
             "additionalProperties": false
+        },
+        "websocket": {
+            "type": "object",
+            "properties": {
+                "fin": {
+                    "type": "boolean"
+                },
+                "mask": {
+                    "type": "integer"
+                },
+                "opcode": {
+                    "type": "string"
+                },
+                "payload_base64": {
+                    "type": "string"
+                },
+                "payload_printable": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
         }
     },
     "$defs": {
+        "dns.soa": {
+            "type": "object",
+            "properties": {
+                "expire": {
+                    "type": "integer"
+                },
+                "minimum": {
+                    "type": "integer"
+                },
+                "mname": {
+                    "type": "string"
+                },
+                "refresh": {
+                    "type": "integer"
+                },
+                "retry": {
+                    "type": "integer"
+                },
+                "rname": {
+                    "type": "string"
+                },
+                "serial": {
+                    "type": "integer"
+                },
+                "mname_truncated": {
+                    "description": "Set to true if the mname was too long and truncated by Suricata",
+                    "type": "boolean"
+                }
+            },
+            "additionalProperties": false
+        },
+        "dns.authorities": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "rdata": {
+                        "type": "string"
+                    },
+                    "rrname": {
+                        "type": "string"
+                    },
+                    "rrtype": {
+                        "type": "string"
+                    },
+                    "ttl": {
+                        "type": "integer"
+                    },
+                    "soa": {
+                        "$ref": "#/$defs/dns.soa"
+                    },
+                    "rdata_truncated": {
+                        "description": "Set to true if the rdata was too long and truncated by Suricata",
+                        "type": "boolean"
+                    },
+                    "rrname_truncated": {
+                        "description": "Set to true if the rrname was too long and truncated by Suricata",
+                        "type": "boolean"
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        "dns.additionals": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "rdata": {
+                        "type": "string"
+                    },
+                    "rrname": {
+                        "type": "string"
+                    },
+                    "rrtype": {
+                        "type": "string"
+                    },
+                    "ttl": {
+                        "type": "integer"
+                    },
+                    "opt": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "code": {
+                                    "type": "integer"
+                                },
+                                "data": {
+                                    "type": "string"
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
         "stats_applayer_error": {
             "type": "object",
             "properties": {
                 "gap": {
+                    "description": "Number of errors processing gaps",
                     "type": "integer"
                 },
                 "alloc": {
+                    "description": "Number of errors allocating memory",
                     "type": "integer"
                 },
                 "parser": {
+                    "description": "Number of errors reported by parser",
                     "type": "integer"
                 },
                 "internal": {
+                    "description": "Number of internal parser errors",
                     "type": "integer"
+                },
+                "exception_policy": {
+                    "description":
+                            "How many times app-layer error exception policy was applied, and which one",
+                    "$ref": "#/$defs/exceptionPolicy"
                 }
             },
             "additionalProperties": false
@@ -5558,6 +7041,35 @@
                             ]
                         }
                     ]
+                }
+            }
+        },
+        "exceptionPolicy": {
+            "type": "object",
+            "properties": {
+                "drop_flow": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "drop_packet": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "pass_flow": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "pass_packet": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "bypass": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "reject": {
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         }

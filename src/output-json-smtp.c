@@ -85,7 +85,7 @@ static int JsonSmtpLogger(ThreadVars *tv, void *thread_data, const Packet *p, Fl
     jb_close(jb);
 
     EveEmailLogJson(jhl, jb, p, f, state, tx, tx_id);
-    OutputJsonBuilderBuffer(jb, jhl->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, jhl->ctx);
 
     jb_free(jb);
 
@@ -193,5 +193,5 @@ void JsonSmtpLogRegister (void) {
     /* register as child of eve-log */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonSmtpLog", "eve-log.smtp",
             OutputSmtpLogInitSub, ALPROTO_SMTP, JsonSmtpLogger, JsonSmtpLogThreadInit,
-            JsonSmtpLogThreadDeinit, NULL);
+            JsonSmtpLogThreadDeinit);
 }

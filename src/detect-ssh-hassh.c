@@ -70,7 +70,7 @@ static InspectionBuffer *GetSshData(DetectEngineThreadCtx *det_ctx,
         const uint8_t *hassh = NULL;
         uint32_t b_len = 0;
 
-        if (rs_ssh_tx_get_hassh(txv, &hassh, &b_len, flow_flags) != 1)
+        if (SCSshTxGetHassh(txv, &hassh, &b_len, flow_flags) != 1)
             return NULL;
         if (hassh == NULL || b_len == 0) {
             SCLogDebug("SSH hassh not set");
@@ -104,11 +104,11 @@ static int DetectSshHasshSetup(DetectEngineCtx *de_ctx, Signature *s, const char
         return -1;
         
     /* try to enable Hassh */
-    rs_ssh_enable_hassh();
+    SCSshEnableHassh();
 
     /* Check if Hassh is disabled */
-    if (!RunmodeIsUnittests() && !rs_ssh_hassh_is_enabled()) {
-        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_SSH_HASSH)) {
+    if (!RunmodeIsUnittests() && !SCSshHasshIsEnabled()) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_SSH_HASSH)) {
             SCLogError("hassh support is not enabled");
         }
         return -2;
@@ -192,12 +192,12 @@ static void DetectSshHasshHashSetupCallback(const DetectEngineCtx *de_ctx,
  */
 void DetectSshHasshRegister(void) 
 {
-    sigmatch_table[DETECT_AL_SSH_HASSH].name = KEYWORD_NAME;
-    sigmatch_table[DETECT_AL_SSH_HASSH].alias = KEYWORD_ALIAS;
-    sigmatch_table[DETECT_AL_SSH_HASSH].desc = BUFFER_NAME " sticky buffer";
-    sigmatch_table[DETECT_AL_SSH_HASSH].url = "/rules/" KEYWORD_DOC;
-    sigmatch_table[DETECT_AL_SSH_HASSH].Setup = DetectSshHasshSetup;
-    sigmatch_table[DETECT_AL_SSH_HASSH].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_SSH_HASSH].name = KEYWORD_NAME;
+    sigmatch_table[DETECT_SSH_HASSH].alias = KEYWORD_ALIAS;
+    sigmatch_table[DETECT_SSH_HASSH].desc = BUFFER_NAME " sticky buffer";
+    sigmatch_table[DETECT_SSH_HASSH].url = "/rules/" KEYWORD_DOC;
+    sigmatch_table[DETECT_SSH_HASSH].Setup = DetectSshHasshSetup;
+    sigmatch_table[DETECT_SSH_HASSH].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
 
     DetectAppLayerMpmRegister(BUFFER_NAME, SIG_FLAG_TOSERVER, 2, PrefilterGenericMpmRegister,
             GetSshData, ALPROTO_SSH, SshStateBannerDone),

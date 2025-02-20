@@ -21,15 +21,13 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __APP_LAYER_FRAMES_H__
-#define __APP_LAYER_FRAMES_H__
+#ifndef SURICATA_APP_LAYER_FRAMES_H
+#define SURICATA_APP_LAYER_FRAMES_H
 
 #include "rust.h"
 
 /** max 63 to fit the 64 bit per protocol space */
 #define FRAME_STREAM_TYPE 63
-/** always the first frame to be created. TODO but what about protocol upgrades? */
-#define FRAME_STREAM_ID 1
 
 typedef int64_t FrameId;
 
@@ -88,9 +86,13 @@ void AppLayerFrameDump(Flow *f);
 
 Frame *FrameGetByIndex(Frames *frames, const uint32_t idx);
 Frame *FrameGetById(Frames *frames, const int64_t id);
+Frame *FrameGetLastOpenByType(Frames *frames, const uint8_t frame_type);
 
 Frame *AppLayerFrameGetById(Flow *f, const int direction, const FrameId frame_id);
+Frame *AppLayerFrameGetLastOpenByType(Flow *f, const int direction, const uint8_t frame_type);
+
 FrameId AppLayerFrameGetId(Frame *r);
+
 void AppLayerFrameAddEvent(Frame *frame, uint8_t e);
 void AppLayerFrameAddEventById(Flow *f, const int dir, const FrameId id, uint8_t e);
 void AppLayerFrameSetLength(Frame *frame, int64_t len);
@@ -104,6 +106,7 @@ FramesContainer *AppLayerFramesGetContainer(Flow *f);
 FramesContainer *AppLayerFramesSetupContainer(Flow *f);
 
 void FrameConfigInit(void);
+void FrameConfigDeInit(void);
 void FrameConfigEnableAll(void);
 void FrameConfigEnable(const AppProto p, const uint8_t type);
 

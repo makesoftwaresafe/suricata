@@ -31,7 +31,7 @@
 #include "source-pcap-file.h"
 #include "util-exception-policy.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 extern PcapFileGlobalVars pcap_g;
 
 static void PcapFileCallbackLoop(char *user, struct pcap_pkthdr *h, u_char *pkt);
@@ -208,6 +208,16 @@ TmEcode InitPcapFile(PcapFileFileVars *pfv)
         SCReturnInt(TM_ECODE_FAILED);
     }
 
+#if defined(HAVE_SETVBUF) && defined(OS_LINUX)
+    if (pcap_g.read_buffer_size > 0) {
+        errno = 0;
+        if (setvbuf(pcap_file(pfv->pcap_handle), pfv->buffer, _IOFBF, pcap_g.read_buffer_size) <
+                0) {
+            SCLogWarning("Failed to setvbuf on PCAP file handle: %s", strerror(errno));
+        }
+    }
+#endif
+
     if (pfv->shared != NULL && pfv->shared->bpf_string != NULL) {
         SCLogInfo("using bpf-filter \"%s\"", pfv->shared->bpf_string);
 
@@ -251,6 +261,7 @@ TmEcode ValidateLinkType(int datalink, DecoderFunc *DecoderFn)
             *DecoderFn = DecodePPP;
             break;
         case LINKTYPE_IPV4:
+        case LINKTYPE_IPV6:
         case LINKTYPE_RAW:
         case LINKTYPE_RAW2:
         case LINKTYPE_GRE_OVER_IP:

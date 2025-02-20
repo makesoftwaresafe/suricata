@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2023 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -61,12 +61,17 @@
 #include "decode-geneve.h"
 #include "decode-erspan.h"
 #include "decode-teredo.h"
+#include "decode-arp.h"
+
+#include "defrag-hash.h"
 
 #include "util-hash.h"
 #include "util-hash-string.h"
 #include "util-print.h"
 #include "util-profiling.h"
 #include "util-validate.h"
+#include "util-debug.h"
+#include "util-exception-policy.h"
 #include "action-globals.h"
 
 uint32_t default_packet_size = 0;
@@ -75,6 +80,58 @@ extern const char *stats_decoder_events_prefix;
 extern bool stats_stream_events;
 uint8_t decoder_max_layers = PKT_DEFAULT_MAX_DECODED_LAYERS;
 uint16_t packet_alert_max = PACKET_ALERT_MAX;
+
+/* Settings order as in the enum */
+// clang-format off
+ExceptionPolicyStatsSetts defrag_memcap_eps_stats = {
+    .valid_settings_ids = {
+    /* EXCEPTION_POLICY_NOT_SET */      false,
+    /* EXCEPTION_POLICY_AUTO */         false,
+    /* EXCEPTION_POLICY_PASS_PACKET */  true,
+    /* EXCEPTION_POLICY_PASS_FLOW */    false,
+    /* EXCEPTION_POLICY_BYPASS_FLOW */  true,
+    /* EXCEPTION_POLICY_DROP_PACKET */  false,
+    /* EXCEPTION_POLICY_DROP_FLOW */    false,
+    /* EXCEPTION_POLICY_REJECT */       true,
+    },
+    .valid_settings_ips = {
+    /* EXCEPTION_POLICY_NOT_SET */      false,
+    /* EXCEPTION_POLICY_AUTO */         false,
+    /* EXCEPTION_POLICY_PASS_PACKET */  true,
+    /* EXCEPTION_POLICY_PASS_FLOW */    false,
+    /* EXCEPTION_POLICY_BYPASS_FLOW */  true,
+    /* EXCEPTION_POLICY_DROP_PACKET */  true,
+    /* EXCEPTION_POLICY_DROP_FLOW */    false,
+    /* EXCEPTION_POLICY_REJECT */       true,
+    },
+};
+// clang-format on
+
+/* Settings order as in the enum */
+// clang-format off
+ExceptionPolicyStatsSetts flow_memcap_eps_stats = {
+    .valid_settings_ids = {
+    /* EXCEPTION_POLICY_NOT_SET */      false,
+    /* EXCEPTION_POLICY_AUTO */         false,
+    /* EXCEPTION_POLICY_PASS_PACKET */  true,
+    /* EXCEPTION_POLICY_PASS_FLOW */    false,
+    /* EXCEPTION_POLICY_BYPASS_FLOW */  true,
+    /* EXCEPTION_POLICY_DROP_PACKET */  false,
+    /* EXCEPTION_POLICY_DROP_FLOW */    false,
+    /* EXCEPTION_POLICY_REJECT */       true,
+    },
+    .valid_settings_ips = {
+    /* EXCEPTION_POLICY_NOT_SET */      false,
+    /* EXCEPTION_POLICY_AUTO */         false,
+    /* EXCEPTION_POLICY_PASS_PACKET */  true,
+    /* EXCEPTION_POLICY_PASS_FLOW */    false,
+    /* EXCEPTION_POLICY_BYPASS_FLOW */  true,
+    /* EXCEPTION_POLICY_DROP_PACKET */  true,
+    /* EXCEPTION_POLICY_DROP_FLOW */    false,
+    /* EXCEPTION_POLICY_REJECT */       true,
+    },
+};
+// clang-format on
 
 /**
  * \brief Initialize PacketAlerts with dynamic alerts array size
@@ -121,6 +178,8 @@ static int DecodeTunnel(ThreadVars *tv, DecodeThreadVars *dtv, Packet *p, const 
             return DecodeERSPANTypeI(tv, dtv, p, pkt, len);
         case DECODE_TUNNEL_NSH:
             return DecodeNSH(tv, dtv, p, pkt, len);
+        case DECODE_TUNNEL_ARP:
+            return DecodeARP(tv, dtv, p, pkt, len);
         default:
             SCLogDebug("FIXME: DecodeTunnel: protocol %" PRIu32 " not supported.", proto);
             break;
@@ -291,7 +350,7 @@ inline int PacketCopyDataOffset(Packet *p, uint32_t offset, const uint8_t *data,
  */
 inline int PacketCopyData(Packet *p, const uint8_t *pktdata, uint32_t pktlen)
 {
-    SET_PKT_LEN(p, (size_t)pktlen);
+    SET_PKT_LEN(p, pktlen);
     return PacketCopyDataOffset(p, 0, pktdata, pktlen);
 }
 
@@ -335,13 +394,15 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
     p->livedev = parent->livedev;
 
     /* set the root ptr to the lowest layer */
-    if (parent->root != NULL)
+    if (parent->root != NULL) {
         p->root = parent->root;
-    else
+        BUG_ON(parent->ttype != PacketTunnelChild);
+    } else {
         p->root = parent;
-
+        parent->ttype = PacketTunnelRoot;
+    }
     /* tell new packet it's part of a tunnel */
-    SET_TUNNEL_PKT(p);
+    p->ttype = PacketTunnelChild;
 
     ret = DecodeTunnel(tv, dtv, p, GET_PKT_DATA(p),
                        GET_PKT_LEN(p), proto);
@@ -351,18 +412,15 @@ Packet *PacketTunnelPktSetup(ThreadVars *tv, DecodeThreadVars *dtv, Packet *pare
     {
         /* Not a (valid) tunnel packet */
         SCLogDebug("tunnel packet is invalid");
-
         p->root = NULL;
-        UNSET_TUNNEL_PKT(p);
         TmqhOutputPacketpool(tv, p);
         SCReturnPtr(NULL, "Packet");
     }
 
-
-    /* tell parent packet it's part of a tunnel */
-    SET_TUNNEL_PKT(parent);
-
-    /* increment tunnel packet refcnt in the root packet */
+    /* Update tunnel settings in parent */
+    if (parent->root == NULL) {
+        parent->ttype = PacketTunnelRoot;
+    }
     TUNNEL_INCR_PKT_TPR(p);
 
     /* disable payload (not packet) inspection on the parent, as the payload
@@ -397,10 +455,15 @@ Packet *PacketDefragPktSetup(Packet *parent, const uint8_t *pkt, uint32_t len, u
     }
 
     /* set the root ptr to the lowest layer */
-    if (parent->root != NULL)
+    if (parent->root != NULL) {
         p->root = parent->root;
-    else
+        BUG_ON(parent->ttype != PacketTunnelChild);
+    } else {
         p->root = parent;
+        // we set parent->ttype later
+    }
+    /* tell new packet it's part of a tunnel */
+    p->ttype = PacketTunnelChild;
 
     /* copy packet and set length, proto */
     if (pkt && len) {
@@ -408,10 +471,7 @@ Packet *PacketDefragPktSetup(Packet *parent, const uint8_t *pkt, uint32_t len, u
     }
     p->recursion_level = parent->recursion_level; /* NOT incremented */
     p->ts = parent->ts;
-    p->datalink = DLT_RAW;
     p->tenant_id = parent->tenant_id;
-    /* tell new packet it's part of a tunnel */
-    SET_TUNNEL_PKT(p);
     memcpy(&p->vlan_id[0], &parent->vlan_id[0], sizeof(p->vlan_id));
     p->vlan_idx = parent->vlan_idx;
     p->livedev = parent->livedev;
@@ -426,7 +486,8 @@ Packet *PacketDefragPktSetup(Packet *parent, const uint8_t *pkt, uint32_t len, u
 void PacketDefragPktSetupParent(Packet *parent)
 {
     /* tell parent packet it's part of a tunnel */
-    SET_TUNNEL_PKT(parent);
+    if (parent->ttype == PacketTunnelNone)
+        parent->ttype = PacketTunnelRoot;
 
     /* increment tunnel packet refcnt in the root packet */
     TUNNEL_INCR_PKT_TPR(parent);
@@ -522,6 +583,22 @@ void DecodeUnregisterCounters(void)
     SCMutexUnlock(&g_counter_table_mutex);
 }
 
+static bool IsDefragMemcapExceptionPolicyStatsValid(enum ExceptionPolicy policy)
+{
+    if (EngineModeIsIPS()) {
+        return defrag_memcap_eps_stats.valid_settings_ips[policy];
+    }
+    return defrag_memcap_eps_stats.valid_settings_ids[policy];
+}
+
+static bool IsFlowMemcapExceptionPolicyStatsValid(enum ExceptionPolicy policy)
+{
+    if (EngineModeIsIPS()) {
+        return flow_memcap_eps_stats.valid_settings_ips[policy];
+    }
+    return flow_memcap_eps_stats.valid_settings_ids[policy];
+}
+
 void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
 {
     /* register counters */
@@ -542,6 +619,7 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
     dtv->counter_tcp_syn = StatsRegisterCounter("tcp.syn", tv);
     dtv->counter_tcp_synack = StatsRegisterCounter("tcp.synack", tv);
     dtv->counter_tcp_rst = StatsRegisterCounter("tcp.rst", tv);
+    dtv->counter_tcp_urg = StatsRegisterCounter("tcp.urg", tv);
 
     dtv->counter_udp = StatsRegisterCounter("decoder.udp", tv);
     dtv->counter_sctp = StatsRegisterCounter("decoder.sctp", tv);
@@ -569,6 +647,9 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
     dtv->counter_erspan = StatsRegisterMaxCounter("decoder.erspan", tv);
     dtv->counter_nsh = StatsRegisterMaxCounter("decoder.nsh", tv);
     dtv->counter_flow_memcap = StatsRegisterCounter("flow.memcap", tv);
+    ExceptionPolicySetStatsCounters(tv, &dtv->counter_flow_memcap_eps, &flow_memcap_eps_stats,
+            FlowGetMemcapExceptionPolicy(), "flow.memcap_exception_policy.",
+            IsFlowMemcapExceptionPolicyStatsValid);
 
     dtv->counter_tcp_active_sessions = StatsRegisterCounter("tcp.active_sessions", tv);
     dtv->counter_flow_total = StatsRegisterCounter("flow.total", tv);
@@ -595,8 +676,15 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
     dtv->counter_defrag_ipv6_fragments =
         StatsRegisterCounter("defrag.ipv6.fragments", tv);
     dtv->counter_defrag_ipv6_reassembled = StatsRegisterCounter("defrag.ipv6.reassembled", tv);
-    dtv->counter_defrag_max_hit =
-        StatsRegisterCounter("defrag.max_frag_hits", tv);
+    dtv->counter_defrag_max_hit = StatsRegisterCounter("defrag.max_trackers_reached", tv);
+    dtv->counter_defrag_no_frags = StatsRegisterCounter("defrag.max_frags_reached", tv);
+    dtv->counter_defrag_tracker_soft_reuse = StatsRegisterCounter("defrag.tracker_soft_reuse", tv);
+    dtv->counter_defrag_tracker_hard_reuse = StatsRegisterCounter("defrag.tracker_hard_reuse", tv);
+    dtv->counter_defrag_tracker_timeout = StatsRegisterCounter("defrag.wrk.tracker_timeout", tv);
+
+    ExceptionPolicySetStatsCounters(tv, &dtv->counter_defrag_memcap_eps, &defrag_memcap_eps_stats,
+            DefragGetMemcapExceptionPolicy(), "defrag.memcap_exception_policy.",
+            IsDefragMemcapExceptionPolicyStatsValid);
 
     for (int i = 0; i < DECODE_EVENT_MAX; i++) {
         BUG_ON(i != (int)DEvents[i].code);
@@ -647,8 +735,6 @@ void DecodeRegisterPerfCounters(DecodeThreadVars *dtv, ThreadVars *tv)
                     DEvents[i].event_name, tv);
         }
     }
-
-    return;
 }
 
 void DecodeUpdatePacketCounters(ThreadVars *tv,
@@ -692,9 +778,9 @@ DecodeThreadVars *DecodeThreadVarsAlloc(ThreadVars *tv)
     if ((dtv = SCCalloc(1, sizeof(DecodeThreadVars))) == NULL)
         return NULL;
 
-    dtv->app_tctx = AppLayerGetCtxThread(tv);
+    dtv->app_tctx = AppLayerGetCtxThread();
 
-    if (OutputFlowLogThreadInit(tv, NULL, &dtv->output_flow_thread_data) != TM_ECODE_OK) {
+    if (OutputFlowLogThreadInit(tv, &dtv->output_flow_thread_data) != TM_ECODE_OK) {
         SCLogError("initializing flow log API for thread failed");
         DecodeThreadVarsFree(tv, dtv);
         return NULL;
@@ -725,7 +811,7 @@ void DecodeThreadVarsFree(ThreadVars *tv, DecodeThreadVars *dtv)
  */
 inline int PacketSetData(Packet *p, const uint8_t *pktdata, uint32_t pktlen)
 {
-    SET_PKT_LEN(p, (size_t)pktlen);
+    SET_PKT_LEN(p, pktlen);
     if (unlikely(!pktdata)) {
         return -1;
     }
@@ -803,6 +889,8 @@ const char *PacketDropReasonToString(enum PacketDropReason r)
             return "stream memcap";
         case PKT_DROP_REASON_STREAM_MIDSTREAM:
             return "stream midstream";
+        case PKT_DROP_REASON_STREAM_URG:
+            return "stream urgent";
         case PKT_DROP_REASON_STREAM_REASSEMBLY:
             return "stream reassembly";
         case PKT_DROP_REASON_APPLAYER_ERROR:
@@ -843,6 +931,8 @@ static const char *PacketDropReasonToJsonString(enum PacketDropReason r)
             return "ips.drop_reason.stream_memcap";
         case PKT_DROP_REASON_STREAM_MIDSTREAM:
             return "ips.drop_reason.stream_midstream";
+        case PKT_DROP_REASON_STREAM_URG:
+            return "ips.drop_reason.stream_urgent";
         case PKT_DROP_REASON_STREAM_REASSEMBLY:
             return "ips.drop_reason.stream_reassembly";
         case PKT_DROP_REASON_APPLAYER_ERROR:

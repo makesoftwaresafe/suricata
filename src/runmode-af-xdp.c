@@ -29,7 +29,6 @@
  * AF_XDP socket runmode
  *
  */
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #define SC_PCAP_DONT_INCLUDE_PCAP_H  1
 #include "suricata-common.h"
 #include "tm-threads.h"
@@ -77,8 +76,6 @@ void RunModeIdsAFXDPRegister(void)
             "Workers af-xdp mode, each thread does all"
             " tasks from acquisition to logging",
             RunModeIdsAFXDPWorkers, NULL);
-
-    return;
 }
 
 #ifdef HAVE_AF_XDP
@@ -164,7 +161,7 @@ static void *ParseAFXDPConfig(const char *iface)
     ConfNode *af_xdp_node = NULL;
     int conf_val = 0;
     intmax_t conf_val_int = 0;
-    bool boolval = false;
+    int boolval = 0;
 
     if (iface == NULL) {
         return NULL;
@@ -223,7 +220,7 @@ static void *ParseAFXDPConfig(const char *iface)
     (void)SC_ATOMIC_ADD(aconf->ref, aconf->threads);
 
     /* Promisc Mode */
-    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", (int *)&boolval);
+    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", &boolval);
     if (boolval) {
         SCLogConfig("Disabling promiscuous mode on iface %s", aconf->iface);
         aconf->promisc = 0;

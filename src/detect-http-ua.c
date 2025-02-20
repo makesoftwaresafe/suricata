@@ -79,16 +79,17 @@ static InspectionBuffer *GetData2(DetectEngineThreadCtx *det_ctx,
 void DetectHttpUARegister(void)
 {
     /* http_user_agent content modifier */
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].name = "http_user_agent";
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].desc = "content modifier to match only on the HTTP User-Agent header";
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].url = "/rules/http-keywords.html#http-user-agent";
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].Setup = DetectHttpUASetup;
+    sigmatch_table[DETECT_HTTP_USER_AGENT].name = "http_user_agent";
+    sigmatch_table[DETECT_HTTP_USER_AGENT].desc =
+            "content modifier to match only on the HTTP User-Agent header";
+    sigmatch_table[DETECT_HTTP_USER_AGENT].url = "/rules/http-keywords.html#http-user-agent";
+    sigmatch_table[DETECT_HTTP_USER_AGENT].Setup = DetectHttpUASetup;
 #ifdef UNITTESTS
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].RegisterTests = DetectHttpUARegisterTests;
+    sigmatch_table[DETECT_HTTP_USER_AGENT].RegisterTests = DetectHttpUARegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].flags |= SIGMATCH_NOOPT;
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].flags |= SIGMATCH_INFO_CONTENT_MODIFIER;
-    sigmatch_table[DETECT_AL_HTTP_USER_AGENT].alternative = DETECT_HTTP_UA;
+    sigmatch_table[DETECT_HTTP_USER_AGENT].flags |= SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_HTTP_USER_AGENT].flags |= SIGMATCH_INFO_CONTENT_MODIFIER;
+    sigmatch_table[DETECT_HTTP_USER_AGENT].alternative = DETECT_HTTP_UA;
 
     /* http.user_agent sticky buffer */
     sigmatch_table[DETECT_HTTP_UA].name = "http.user_agent";
@@ -99,10 +100,10 @@ void DetectHttpUARegister(void)
     sigmatch_table[DETECT_HTTP_UA].flags |= SIGMATCH_INFO_STICKY_BUFFER;
 
     DetectAppLayerInspectEngineRegister("http_user_agent", ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
-            HTP_REQUEST_HEADERS, DetectEngineInspectBufferGeneric, GetData);
+            HTP_REQUEST_PROGRESS_HEADERS, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerMpmRegister("http_user_agent", SIG_FLAG_TOSERVER, 2, PrefilterGenericMpmRegister,
-            GetData, ALPROTO_HTTP1, HTP_REQUEST_HEADERS);
+            GetData, ALPROTO_HTTP1, HTP_REQUEST_PROGRESS_HEADERS);
 
     DetectAppLayerInspectEngineRegister("http_user_agent", ALPROTO_HTTP2, SIG_FLAG_TOSERVER,
             HTTP2StateDataClient, DetectEngineInspectBufferGeneric, GetData2);
@@ -132,7 +133,7 @@ void DetectHttpUARegister(void)
 int DetectHttpUASetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
     return DetectEngineContentModifierBufferSetup(
-            de_ctx, s, arg, DETECT_AL_HTTP_USER_AGENT, g_http_ua_buffer_id, ALPROTO_HTTP1);
+            de_ctx, s, arg, DETECT_HTTP_USER_AGENT, g_http_ua_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -161,18 +162,17 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
     if (buffer->inspect == NULL) {
         htp_tx_t *tx = (htp_tx_t *)txv;
 
-        if (tx->request_headers == NULL)
+        if (htp_tx_request_headers(tx) == NULL)
             return NULL;
 
-        htp_header_t *h = (htp_header_t *)htp_table_get_c(tx->request_headers,
-                "User-Agent");
-        if (h == NULL || h->value == NULL) {
+        const htp_header_t *h = htp_tx_request_header(tx, "User-Agent");
+        if (h == NULL || htp_header_value(h) == NULL) {
             SCLogDebug("HTTP UA header not present in this request");
             return NULL;
         }
 
-        const uint32_t data_len = bstr_len(h->value);
-        const uint8_t *data = bstr_ptr(h->value);
+        const uint32_t data_len = htp_header_value_len(h);
+        const uint8_t *data = htp_header_value_ptr(h);
 
         InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);

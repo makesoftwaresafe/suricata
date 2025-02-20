@@ -87,13 +87,13 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 {
     InspectionBuffer *buffer = InspectionBufferGet(det_ctx, list_id);
     if (buffer->inspect == NULL) {
-        bstr *str = NULL;
+        const bstr *str = NULL;
         htp_tx_t *tx = (htp_tx_t *)txv;
 
         if (flow_flags & STREAM_TOSERVER)
-            str = tx->request_protocol;
+            str = htp_tx_request_protocol(tx);
         else if (flow_flags & STREAM_TOCLIENT)
-            str = tx->response_protocol;
+            str = htp_tx_response_protocol(tx);
 
         if (str == NULL) {
             SCLogDebug("HTTP protocol not set");
@@ -128,26 +128,50 @@ static InspectionBuffer *GetData2(DetectEngineThreadCtx *det_ctx,
     return buffer;
 }
 
+static bool DetectHttpProtocolValidateCallback(const Signature *s, const char **sigerror)
+{
+#ifdef HAVE_HTP_CONFIG_SET_ALLOW_SPACE_URI
+    for (uint32_t x = 0; x < s->init_data->buffer_index; x++) {
+        if (s->init_data->buffers[x].id != (uint32_t)g_buffer_id)
+            continue;
+        const SigMatch *sm = s->init_data->buffers[x].head;
+        for (; sm != NULL; sm = sm->next) {
+            if (sm->type != DETECT_CONTENT)
+                continue;
+            const DetectContentData *cd = (DetectContentData *)sm->ctx;
+            for (size_t i = 0; i < cd->content_len; ++i) {
+                if (cd->content[i] == ' ') {
+                    *sigerror = "Invalid http.protocol string containing a space";
+                    SCLogWarning("rule %u: %s", s->id, *sigerror);
+                    return false;
+                }
+            }
+        }
+    }
+#endif
+    return true;
+}
+
 /**
  * \brief Registers the keyword handlers for the "http.protocol" keyword.
  */
 void DetectHttpProtocolRegister(void)
 {
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].name = KEYWORD_NAME;
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].alias = KEYWORD_NAME_LEGACY;
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].desc = BUFFER_NAME " sticky buffer";
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].url = "/rules/" KEYWORD_DOC;
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].Setup = DetectHttpProtocolSetup;
-    sigmatch_table[DETECT_AL_HTTP_PROTOCOL].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_HTTP_PROTOCOL].name = KEYWORD_NAME;
+    sigmatch_table[DETECT_HTTP_PROTOCOL].alias = KEYWORD_NAME_LEGACY;
+    sigmatch_table[DETECT_HTTP_PROTOCOL].desc = BUFFER_NAME " sticky buffer";
+    sigmatch_table[DETECT_HTTP_PROTOCOL].url = "/rules/" KEYWORD_DOC;
+    sigmatch_table[DETECT_HTTP_PROTOCOL].Setup = DetectHttpProtocolSetup;
+    sigmatch_table[DETECT_HTTP_PROTOCOL].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
 
     DetectAppLayerMpmRegister(BUFFER_NAME, SIG_FLAG_TOSERVER, 2, PrefilterGenericMpmRegister,
-            GetData, ALPROTO_HTTP1, HTP_REQUEST_LINE);
+            GetData, ALPROTO_HTTP1, HTP_REQUEST_PROGRESS_LINE);
     DetectAppLayerMpmRegister(BUFFER_NAME, SIG_FLAG_TOCLIENT, 2, PrefilterGenericMpmRegister,
-            GetData, ALPROTO_HTTP1, HTP_RESPONSE_LINE);
+            GetData, ALPROTO_HTTP1, HTP_RESPONSE_PROGRESS_LINE);
     DetectAppLayerInspectEngineRegister(BUFFER_NAME, ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
-            HTP_REQUEST_LINE, DetectEngineInspectBufferGeneric, GetData);
+            HTP_REQUEST_PROGRESS_LINE, DetectEngineInspectBufferGeneric, GetData);
     DetectAppLayerInspectEngineRegister(BUFFER_NAME, ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
-            HTP_RESPONSE_LINE, DetectEngineInspectBufferGeneric, GetData);
+            HTP_RESPONSE_PROGRESS_LINE, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerInspectEngineRegister(BUFFER_NAME, ALPROTO_HTTP2, SIG_FLAG_TOSERVER,
             HTTP2StateDataClient, DetectEngineInspectBufferGeneric, GetData2);
@@ -160,6 +184,7 @@ void DetectHttpProtocolRegister(void)
 
     DetectBufferTypeSetDescriptionByName(BUFFER_NAME,
             BUFFER_DESC);
+    DetectBufferTypeRegisterValidateCallback(BUFFER_NAME, DetectHttpProtocolValidateCallback);
 
     g_buffer_id = DetectBufferTypeGetByName(BUFFER_NAME);
 }

@@ -28,16 +28,20 @@
 use std;
 use std::str;
 use std::ffi::{self, CString};
-
-use std::collections::HashMap;
 use std::collections::VecDeque;
  
 use nom7::{Err, Needed};
 use nom7::error::{make_error, ErrorKind};
 
+use lru::LruCache;
+use suricata_sys::sys::AppProto;
+use std::num::NonZeroUsize;
+
 use crate::core::*;
 use crate::applayer;
 use crate::applayer::*;
+use crate::direction::Direction;
+use crate::flow::{Flow, FLOW_DIR_REVERSED};
 use crate::frames::*;
 use crate::conf::*;
 use crate::applayer::{AppLayerResult, AppLayerTxData, AppLayerEvent};
@@ -80,6 +84,16 @@ pub static mut SMB_CFG_MAX_READ_QUEUE_CNT: u32 = 64;
 pub static mut SMB_CFG_MAX_WRITE_SIZE: u32 = 16777216;
 pub static mut SMB_CFG_MAX_WRITE_QUEUE_SIZE: u32 = 67108864;
 pub static mut SMB_CFG_MAX_WRITE_QUEUE_CNT: u32 = 64;
+/// max size of the per state guid2name cache
+pub static mut SMB_CFG_MAX_GUID_CACHE_SIZE: usize = 1024;
+/// SMBState::read_offset_cache
+pub static mut SMB_CFG_MAX_READ_OFFSET_CACHE_SIZE: usize = 128;
+/// For SMBState::ssn2tree_cache
+pub static mut SMB_CFG_MAX_TREE_CACHE_SIZE: usize = 512;
+/// For SMBState::dcerpc_rec_frag_cache
+pub static mut SMB_CFG_MAX_FRAG_CACHE_SIZE: usize = 128;
+/// For SMBState::ssn2vec_cache
+pub static mut SMB_CFG_MAX_SSN2VEC_CACHE_SIZE: usize = 512;
 
 static mut ALPROTO_SMB: AppProto = ALPROTO_UNKNOWN;
 
@@ -469,7 +483,8 @@ impl SMBTransactionTreeConnect {
 
 #[derive(Debug)]
 pub struct SMBTransaction {
-    pub id: u64,    /// internal id
+    /// internal id
+    pub id: u64,
 
     /// version, command and status
     pub vercmd: SMBVerCmdStat,
@@ -682,22 +697,31 @@ pub fn u32_as_bytes(i: u32) -> [u8;4] {
     return [o1, o2, o3, o4]
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct SMBState<> {
     pub state_data: AppLayerStateData,
 
     /// map ssn/tree/msgid to vec (guid/name/share)
-    pub ssn2vec_map: HashMap<SMBCommonHdr, Vec<u8>>,
+    pub ssn2vec_cache: LruCache<SMBCommonHdr, Vec<u8>>,
+
     /// map guid to filename
-    pub guid2name_map: HashMap<Vec<u8>, Vec<u8>>,
+    ///
+    /// Lifecycle of the members:
+    /// - Added by CREATE responses
+    /// - Removed by CLOSE requests
+    /// - Post GAP logic removes based on timestamp, as the CLOSE
+    ///   commands may have been missed.
+    ///
+    pub guid2name_cache: LruCache<Vec<u8>, Vec<u8>>,
+
     /// map ssn key to read offset
-    pub ssn2vecoffset_map: HashMap<SMBCommonHdr, SMBFileGUIDOffset>,
+    pub read_offset_cache: LruCache<SMBCommonHdr, SMBFileGUIDOffset>,
+    /// Map session key to SMBTree
+    pub ssn2tree_cache: LruCache<SMBCommonHdr, SMBTree>,
 
-    pub ssn2tree_map: HashMap<SMBCommonHdr, SMBTree>,
-
-    // store partial data records that are transferred in multiple
-    // requests for DCERPC.
-    pub ssnguid2vec_map: HashMap<SMBHashKeyHdrGuid, Vec<u8>>,
+    /// store partial data records that are transferred in multiple
+    /// requests for DCERPC.
+    pub dcerpc_rec_frag_cache: LruCache<SMBHashKeyHdrGuid, Vec<u8>>,
 
     skip_ts: u32,
     skip_tc: u32,
@@ -755,16 +779,22 @@ impl State<SMBTransaction> for SMBState {
     }
 }
 
+impl Default for SMBState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SMBState {
     /// Allocation function for a new TLS parser instance
     pub fn new() -> Self {
         Self {
             state_data:AppLayerStateData::new(),
-            ssn2vec_map:HashMap::new(),
-            guid2name_map:HashMap::new(),
-            ssn2vecoffset_map:HashMap::new(),
-            ssn2tree_map:HashMap::new(),
-            ssnguid2vec_map:HashMap::new(),
+            ssn2vec_cache:LruCache::new(NonZeroUsize::new(unsafe { SMB_CFG_MAX_SSN2VEC_CACHE_SIZE }).unwrap()),
+            guid2name_cache:LruCache::new(NonZeroUsize::new(unsafe { SMB_CFG_MAX_GUID_CACHE_SIZE }).unwrap()),
+            read_offset_cache:LruCache::new(NonZeroUsize::new(unsafe { SMB_CFG_MAX_READ_OFFSET_CACHE_SIZE }).unwrap()),
+            ssn2tree_cache:LruCache::new(NonZeroUsize::new(unsafe { SMB_CFG_MAX_TREE_CACHE_SIZE }).unwrap()),
+            dcerpc_rec_frag_cache:LruCache::new(NonZeroUsize::new(unsafe { SMB_CFG_MAX_FRAG_CACHE_SIZE }).unwrap()),
             skip_ts:0,
             skip_tc:0,
             file_ts_left:0,
@@ -785,8 +815,9 @@ impl SMBState {
             dialect:0,
             dialect_vec: None,
             dcerpc_ifaces: None,
+            max_read_size: 0,
+            max_write_size: 0,
             ts: 0,
-            ..Default::default()
         }
     }
 
@@ -805,6 +836,8 @@ impl SMBState {
             for tx_old in &mut self.transactions.range_mut(self.tx_index_completed..) {
                 index += 1;
                 if !tx_old.request_done || !tx_old.response_done {
+                    tx_old.tx_data.updated_tc = true;
+                    tx_old.tx_data.updated_ts = true;
                     tx_old.request_done = true;
                     tx_old.response_done = true;
                     tx_old.set_event(SMBEvent::TooManyTransactions);
@@ -923,6 +956,8 @@ impl SMBState {
                 false
             };
             if found {
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -947,6 +982,8 @@ impl SMBState {
                 false
             };
             if found {
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -985,6 +1022,8 @@ impl SMBState {
                 _ => { false },
             };
             if found {
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -1018,6 +1057,8 @@ impl SMBState {
                 _ => { false },
             };
             if hit {
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -1043,9 +1084,9 @@ impl SMBState {
         return tx_ref.unwrap();
     }
 
-    pub fn get_service_for_guid(&self, guid: &[u8]) -> (&'static str, bool)
+    pub fn get_service_for_guid(&mut self, guid: &[u8]) -> (&'static str, bool)
     {
-        let (name, is_dcerpc) = match self.guid2name_map.get(&guid.to_vec()) {
+        let (name, is_dcerpc) = match self.guid2name_cache.get(guid) {
             Some(n) => {
                 let mut s = n.as_slice();
                 // skip leading \ if we have it
@@ -1196,53 +1237,53 @@ impl SMBState {
     }
 
     fn add_nbss_ts_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> (Option<Frame>, Option<Frame>, Option<Frame>) {
-        let nbss_pdu = Frame::new(flow, stream_slice, input, nbss_len + 4, SMBFrameType::NBSSPdu as u8);
+        let nbss_pdu = Frame::new(flow, stream_slice, input, nbss_len + 4, SMBFrameType::NBSSPdu as u8, None);
         SCLogDebug!("NBSS PDU frame {:?}", nbss_pdu);
-        let nbss_hdr_frame = Frame::new(flow, stream_slice, input, 4_i64, SMBFrameType::NBSSHdr as u8);
+        let nbss_hdr_frame = Frame::new(flow, stream_slice, input, 4_i64, SMBFrameType::NBSSHdr as u8, None);
         SCLogDebug!("NBSS HDR frame {:?}", nbss_hdr_frame);
-        let nbss_data_frame = Frame::new(flow, stream_slice, &input[4..], nbss_len, SMBFrameType::NBSSData as u8);
+        let nbss_data_frame = Frame::new(flow, stream_slice, &input[4..], nbss_len, SMBFrameType::NBSSData as u8, None);
         SCLogDebug!("NBSS DATA frame {:?}", nbss_data_frame);
         (nbss_pdu, nbss_hdr_frame, nbss_data_frame)
     }
 
     fn add_smb1_ts_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> Option<Frame> {
-        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB1Pdu as u8);
+        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB1Pdu as u8, None);
         SCLogDebug!("SMB PDU frame {:?}", smb_pdu);
         smb_pdu
     }
     fn add_smb1_ts_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) {
-        let _smb1_hdr = Frame::new(flow, stream_slice, input, 32_i64, SMBFrameType::SMB1Hdr as u8);
+        let _smb1_hdr = Frame::new(flow, stream_slice, input, 32_i64, SMBFrameType::SMB1Hdr as u8, None);
         SCLogDebug!("SMBv1 HDR frame {:?}", _smb1_hdr);
         if input.len() > 32 {
-            let _smb1_data = Frame::new(flow, stream_slice, &input[32..], nbss_len - 32, SMBFrameType::SMB1Data as u8);
+            let _smb1_data = Frame::new(flow, stream_slice, &input[32..], nbss_len - 32, SMBFrameType::SMB1Data as u8, None);
             SCLogDebug!("SMBv1 DATA frame {:?}", _smb1_data);
         }
     }
 
     fn add_smb2_ts_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> Option<Frame> {
-        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB2Pdu as u8);
+        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB2Pdu as u8, None);
         SCLogDebug!("SMBv2 PDU frame {:?}", smb_pdu);
         smb_pdu
     }
     fn add_smb2_ts_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64, hdr_len: i64) {
-        let _smb2_hdr = Frame::new(flow, stream_slice, input, hdr_len, SMBFrameType::SMB2Hdr as u8);
+        let _smb2_hdr = Frame::new(flow, stream_slice, input, hdr_len, SMBFrameType::SMB2Hdr as u8, None);
         SCLogDebug!("SMBv2 HDR frame {:?}", _smb2_hdr);
         if input.len() > hdr_len as usize {
-            let _smb2_data = Frame::new(flow, stream_slice, &input[hdr_len as usize..], nbss_len - hdr_len, SMBFrameType::SMB2Data as u8);
+            let _smb2_data = Frame::new(flow, stream_slice, &input[hdr_len as usize..], nbss_len - hdr_len, SMBFrameType::SMB2Data as u8, None);
             SCLogDebug!("SMBv2 DATA frame {:?}", _smb2_data);
         }
     }
 
     fn add_smb3_ts_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> Option<Frame> {
-        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB3Pdu as u8);
+        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB3Pdu as u8, None);
         SCLogDebug!("SMBv3 PDU frame {:?}", smb_pdu);
         smb_pdu
     }
     fn add_smb3_ts_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) {
-        let _smb3_hdr = Frame::new(flow, stream_slice, input, 52_i64, SMBFrameType::SMB3Hdr as u8);
+        let _smb3_hdr = Frame::new(flow, stream_slice, input, 52_i64, SMBFrameType::SMB3Hdr as u8, None);
         SCLogDebug!("SMBv3 HDR frame {:?}", _smb3_hdr);
         if input.len() > 52 {
-            let _smb3_data = Frame::new(flow, stream_slice, &input[52..], nbss_len - 52, SMBFrameType::SMB3Data as u8);
+            let _smb3_data = Frame::new(flow, stream_slice, &input[52..], nbss_len - 52, SMBFrameType::SMB3Data as u8, None);
             SCLogDebug!("SMBv3 DATA frame {:?}", _smb3_data);
         }
     }
@@ -1280,7 +1321,7 @@ impl SMBState {
                                 // if complete.
                                 let tree_key = SMBCommonHdr::new(SMBHDR_TYPE_SHARE,
                                                                  r.ssn_id as u64, r.tree_id as u32, 0);
-                                let is_pipe = match self.ssn2tree_map.get(&tree_key) {
+                                let is_pipe = match self.ssn2tree_cache.get(&tree_key) {
                                     Some(n) => n.is_pipe,
                                     None => false,
                                 };
@@ -1532,53 +1573,53 @@ impl SMBState {
     }
 
     fn add_nbss_tc_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> (Option<Frame>, Option<Frame>, Option<Frame>) {
-        let nbss_pdu = Frame::new(flow, stream_slice, input, nbss_len + 4, SMBFrameType::NBSSPdu as u8);
+        let nbss_pdu = Frame::new(flow, stream_slice, input, nbss_len + 4, SMBFrameType::NBSSPdu as u8, None);
         SCLogDebug!("NBSS PDU frame {:?}", nbss_pdu);
-        let nbss_hdr_frame = Frame::new(flow, stream_slice, input, 4_i64, SMBFrameType::NBSSHdr as u8);
+        let nbss_hdr_frame = Frame::new(flow, stream_slice, input, 4_i64, SMBFrameType::NBSSHdr as u8, None);
         SCLogDebug!("NBSS HDR frame {:?}", nbss_hdr_frame);
-        let nbss_data_frame = Frame::new(flow, stream_slice, &input[4..], nbss_len, SMBFrameType::NBSSData as u8);
+        let nbss_data_frame = Frame::new(flow, stream_slice, &input[4..], nbss_len, SMBFrameType::NBSSData as u8, None);
         SCLogDebug!("NBSS DATA frame {:?}", nbss_data_frame);
         (nbss_pdu, nbss_hdr_frame, nbss_data_frame)
     }
 
     fn add_smb1_tc_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> Option<Frame> {
-        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB1Pdu as u8);
+        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB1Pdu as u8, None);
         SCLogDebug!("SMB PDU frame {:?}", smb_pdu);
         smb_pdu
     }
     fn add_smb1_tc_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) {
-        let _smb1_hdr = Frame::new(flow, stream_slice, input, SMB1_HEADER_SIZE as i64, SMBFrameType::SMB1Hdr as u8);
+        let _smb1_hdr = Frame::new(flow, stream_slice, input, SMB1_HEADER_SIZE as i64, SMBFrameType::SMB1Hdr as u8, None);
         SCLogDebug!("SMBv1 HDR frame {:?}", _smb1_hdr);
         if input.len() > SMB1_HEADER_SIZE {
             let _smb1_data = Frame::new(flow, stream_slice, &input[SMB1_HEADER_SIZE..], nbss_len - SMB1_HEADER_SIZE as i64,
-                    SMBFrameType::SMB1Data as u8);
+                    SMBFrameType::SMB1Data as u8, None);
             SCLogDebug!("SMBv1 DATA frame {:?}", _smb1_data);
         }
     }
 
     fn add_smb2_tc_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) -> Option<Frame> {
-        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB2Pdu as u8);
+        let smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB2Pdu as u8, None);
         SCLogDebug!("SMBv2 PDU frame {:?}", smb_pdu);
         smb_pdu
     }
     fn add_smb2_tc_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64, hdr_len: i64) {
-        let _smb2_hdr = Frame::new(flow, stream_slice, input, hdr_len, SMBFrameType::SMB2Hdr as u8);
+        let _smb2_hdr = Frame::new(flow, stream_slice, input, hdr_len, SMBFrameType::SMB2Hdr as u8, None);
         SCLogDebug!("SMBv2 HDR frame {:?}", _smb2_hdr);
         if input.len() > hdr_len as usize {
-            let _smb2_data = Frame::new(flow, stream_slice, &input[hdr_len as usize ..], nbss_len - hdr_len, SMBFrameType::SMB2Data as u8);
+            let _smb2_data = Frame::new(flow, stream_slice, &input[hdr_len as usize ..], nbss_len - hdr_len, SMBFrameType::SMB2Data as u8, None);
             SCLogDebug!("SMBv2 DATA frame {:?}", _smb2_data);
         }
     }
 
     fn add_smb3_tc_pdu_frame(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) {
-        let _smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB3Pdu as u8);
+        let _smb_pdu = Frame::new(flow, stream_slice, input, nbss_len, SMBFrameType::SMB3Pdu as u8, None);
         SCLogDebug!("SMBv3 PDU frame {:?}", _smb_pdu);
     }
     fn add_smb3_tc_hdr_data_frames(&mut self, flow: *const Flow, stream_slice: &StreamSlice, input: &[u8], nbss_len: i64) {
-        let _smb3_hdr = Frame::new(flow, stream_slice, input, 52_i64, SMBFrameType::SMB3Hdr as u8);
+        let _smb3_hdr = Frame::new(flow, stream_slice, input, 52_i64, SMBFrameType::SMB3Hdr as u8, None);
         SCLogDebug!("SMBv3 HDR frame {:?}", _smb3_hdr);
         if input.len() > 52 {
-            let _smb3_data = Frame::new(flow, stream_slice, &input[52..], nbss_len - 52, SMBFrameType::SMB3Data as u8);
+            let _smb3_data = Frame::new(flow, stream_slice, &input[52..], nbss_len - 52, SMBFrameType::SMB3Data as u8, None);
             SCLogDebug!("SMBv3 DATA frame {:?}", _smb3_data);
         }
     }
@@ -1616,7 +1657,7 @@ impl SMBState {
                             if r.command == SMB1_COMMAND_READ_ANDX {
                                 let tree_key = SMBCommonHdr::new(SMBHDR_TYPE_SHARE,
                                         r.ssn_id as u64, r.tree_id as u32, 0);
-                                let is_pipe = match self.ssn2tree_map.get(&tree_key) {
+                                let is_pipe = match self.ssn2tree_cache.get(&tree_key) {
                                     Some(n) => n.is_pipe,
                                         None => false,
                                 };
@@ -1860,19 +1901,30 @@ impl SMBState {
     /// handle a gap in the TOSERVER direction
     /// returns: 0 ok, 1 unrecoverable error
     pub fn parse_tcp_data_ts_gap(&mut self, gap_size: u32) -> AppLayerResult {
+        SCLogDebug!("GAP of size {} in toserver direction", gap_size);
         let consumed = self.handle_skip(Direction::ToServer, gap_size);
+        if consumed == gap_size {
+            /* no need to tag ssn as gap'd as we got it in our skip logic. */
+            return AppLayerResult::ok();
+        }
+
         if consumed < gap_size {
             let new_gap_size = gap_size - consumed;
             let gap = vec![0; new_gap_size as usize];
 
             let consumed2 = self.filetracker_update(Direction::ToServer, &gap, new_gap_size);
+            if consumed2 == new_gap_size {
+                /* no need to tag ssn as gap'd as we got it in our file logic. */
+                return AppLayerResult::ok();
+            }
+
             if consumed2 > new_gap_size {
                 SCLogDebug!("consumed more than GAP size: {} > {}", consumed2, new_gap_size);
                 self.set_event(SMBEvent::InternalError);
                 return AppLayerResult::err();
             }
         }
-        SCLogDebug!("GAP of size {} in toserver direction", gap_size);
+
         self.ts_ssn_gap = true;
         self.ts_gap = true;
         return AppLayerResult::ok();
@@ -1881,19 +1933,30 @@ impl SMBState {
     /// handle a gap in the TOCLIENT direction
     /// returns: 0 ok, 1 unrecoverable error
     pub fn parse_tcp_data_tc_gap(&mut self, gap_size: u32) -> AppLayerResult {
+        SCLogDebug!("GAP of size {} in toclient direction", gap_size);
         let consumed = self.handle_skip(Direction::ToClient, gap_size);
+        if consumed == gap_size {
+            /* no need to tag ssn as gap'd as we got it in our skip logic. */
+            return AppLayerResult::ok();
+        }
+
         if consumed < gap_size {
             let new_gap_size = gap_size - consumed;
             let gap = vec![0; new_gap_size as usize];
 
             let consumed2 = self.filetracker_update(Direction::ToClient, &gap, new_gap_size);
+            if consumed2 == new_gap_size {
+                /* no need to tag ssn as gap'd as we got it in our file logic. */
+                return AppLayerResult::ok();
+            }
+
             if consumed2 > new_gap_size {
                 SCLogDebug!("consumed more than GAP size: {} > {}", consumed2, new_gap_size);
                 self.set_event(SMBEvent::InternalError);
                 return AppLayerResult::err();
             }
         }
-        SCLogDebug!("GAP of size {} in toclient direction", gap_size);
+
         self.tc_ssn_gap = true;
         self.tc_gap = true;
         return AppLayerResult::ok();
@@ -2025,57 +2088,51 @@ fn smb_probe_tcp_midstream(direction: Direction, slice: &[u8], rdir: *mut u8, be
     } else {
         search_smb_record(slice)
     };
-    match r {
-        Ok((_, data)) => {
-            SCLogDebug!("smb found");
-            match parse_smb_version(data) {
-                Ok((_, ref smb)) => {
-                    SCLogDebug!("SMB {:?}", smb);
-                    if smb.version == 0xff_u8 { // SMB1
-                        SCLogDebug!("SMBv1 record");
-                        if let Ok((_, ref smb_record)) = parse_smb_record(data) {
-                            if smb_record.flags & 0x80 != 0 {
-                                SCLogDebug!("RESPONSE {:02x}", smb_record.flags);
-                                if direction == Direction::ToServer {
-                                    unsafe { *rdir = Direction::ToClient as u8; }
-                                }
-                            } else {
-                                SCLogDebug!("REQUEST {:02x}", smb_record.flags);
-                                if direction == Direction::ToClient {
-                                    unsafe { *rdir = Direction::ToServer as u8; }
-                                }
-                            }
-                            return 1;
+    if let Ok((_, data)) = r {
+        SCLogDebug!("smb found");
+        if let Ok((_, ref smb)) = parse_smb_version(data) {
+            SCLogDebug!("SMB {:?}", smb);
+            if smb.version == 0xff_u8 { // SMB1
+                SCLogDebug!("SMBv1 record");
+                if let Ok((_, ref smb_record)) = parse_smb_record(data) {
+                    if smb_record.flags & 0x80 != 0 {
+                        SCLogDebug!("RESPONSE {:02x}", smb_record.flags);
+                        if direction == Direction::ToServer {
+                            unsafe { *rdir = Direction::ToClient as u8; }
                         }
-                    } else if smb.version == 0xfe_u8 { // SMB2
-                        SCLogDebug!("SMB2 record");
-                        if let Ok((_, ref smb_record)) = parse_smb2_record_direction(data) {
-                            if direction == Direction::ToServer {
-                                SCLogDebug!("direction Direction::ToServer smb_record {:?}", smb_record);
-                                if !smb_record.request {
-                                    unsafe { *rdir = Direction::ToClient as u8; }
-                                }
-                            } else {
-                                SCLogDebug!("direction Direction::ToClient smb_record {:?}", smb_record);
-                                if smb_record.request {
-                                    unsafe { *rdir = Direction::ToServer as u8; }
-                                }
-                            }
+                    } else {
+                        SCLogDebug!("REQUEST {:02x}", smb_record.flags);
+                        if direction == Direction::ToClient {
+                            unsafe { *rdir = Direction::ToServer as u8; }
                         }
-                    }
-                    else if smb.version == 0xfd_u8 { // SMB3 transform
-                        SCLogDebug!("SMB3 record");
                     }
                     return 1;
-                },
-                    _ => {
-                        SCLogDebug!("smb not found in {:?}", slice);
-                    },
+                }
+            } else if smb.version == 0xfe_u8 { // SMB2
+                SCLogDebug!("SMB2 record");
+                if let Ok((_, ref smb_record)) = parse_smb2_record_direction(data) {
+                    if direction == Direction::ToServer {
+                        SCLogDebug!("direction Direction::ToServer smb_record {:?}", smb_record);
+                        if !smb_record.request {
+                            unsafe { *rdir = Direction::ToClient as u8; }
+                        }
+                    } else {
+                        SCLogDebug!("direction Direction::ToClient smb_record {:?}", smb_record);
+                        if smb_record.request {
+                            unsafe { *rdir = Direction::ToServer as u8; }
+                        }
+                    }
+                }
             }
-        },
-        _ => {
-            SCLogDebug!("no dice");
-        },
+            else if smb.version == 0xfd_u8 { // SMB3 transform
+                SCLogDebug!("SMB3 record");
+            }
+            return 1;
+        } else {
+            SCLogDebug!("smb not found in {:?}", slice);
+        }
+    } else {
+        SCLogDebug!("no dice");
     }
     return 0;
 }
@@ -2111,7 +2168,7 @@ fn smb_probe_tcp(flags: u8, slice: &[u8], rdir: *mut u8, begins: bool) -> AppPro
             }
     }
     SCLogDebug!("no smb");
-    unsafe { return ALPROTO_FAILED; }
+    return ALPROTO_FAILED;
 }
 
 // probing confirmation parser
@@ -2121,7 +2178,7 @@ pub unsafe extern "C" fn rs_smb_probe_begins_tcp(_f: *const Flow,
                                    flags: u8, input: *const u8, len: u32, rdir: *mut u8)
     -> AppProto
 {
-    if len < MIN_REC_SIZE as u32 {
+    if len < MIN_REC_SIZE as u32 || input.is_null() {
         return ALPROTO_UNKNOWN;
     }
     let slice = build_slice!(input, len as usize);
@@ -2135,7 +2192,7 @@ pub unsafe extern "C" fn rs_smb_probe_tcp(_f: *const Flow,
                                    flags: u8, input: *const u8, len: u32, rdir: *mut u8)
     -> AppProto
 {
-    if len < MIN_REC_SIZE as u32 {
+    if len < MIN_REC_SIZE as u32 || input.is_null() {
         return ALPROTO_UNKNOWN;
     }
     let slice = build_slice!(input, len as usize);
@@ -2207,36 +2264,19 @@ pub unsafe extern "C" fn rs_smb_get_tx_data(
     return &mut tx.tx_data;
 }
 
-
-#[no_mangle]
-pub unsafe extern "C" fn rs_smb_state_truncate(
-        state: *mut std::ffi::c_void,
-        direction: u8)
-{
-    let state = cast_pointer!(state, SMBState);
-    match direction.into() {
-        Direction::ToServer => {
-            state.trunc_ts();
-        }
-        Direction::ToClient => {
-            state.trunc_tc();
-        }
-    }
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn rs_smb_state_get_event_info_by_id(
-    event_id: std::os::raw::c_int,
+    event_id: u8,
     event_name: *mut *const std::os::raw::c_char,
     event_type: *mut AppLayerEventType,
-) -> i8 {
+) -> std::os::raw::c_int {
     SMBEvent::get_event_info_by_id(event_id, event_name, event_type)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_smb_state_get_event_info(
     event_name: *const std::os::raw::c_char,
-    event_id: *mut std::os::raw::c_int,
+    event_id: *mut u8,
     event_type: *mut AppLayerEventType,
 ) -> std::os::raw::c_int {
     SMBEvent::get_event_info(event_name, event_id, event_type)
@@ -2333,7 +2373,6 @@ pub unsafe extern "C" fn rs_smb_register_parser() {
         get_state_data: rs_smb_get_state_data,
         apply_tx_config: None,
         flags: APP_LAYER_PARSER_OPT_ACCEPT_GAPS,
-        truncate: Some(rs_smb_state_truncate),
         get_frame_id_by_name: Some(SMBFrameType::ffi_id_from_name),
         get_frame_name_by_id: Some(SMBFrameType::ffi_name_from_id),
     };
@@ -2425,10 +2464,71 @@ pub unsafe extern "C" fn rs_smb_register_parser() {
                 SCLogError!("Invalid value for smb.max-tx");
             }
         }
+        let retval = conf_get("app-layer.protocols.smb.max-guid-cache-size");
+        if let Some(val) = retval {
+            if let Ok(v) = val.parse::<usize>() {
+                if v > 0 {
+                    SMB_CFG_MAX_GUID_CACHE_SIZE = v;
+                } else {
+                    SCLogError!("Invalid max-guid-cache-size value");
+                }
+            } else {
+                SCLogError!("Invalid max-guid-cache-size value");
+            }
+        }
+        let retval = conf_get("app-layer.protocols.smb.max-read-offset-cache-size");
+        if let Some(val) = retval {
+            if let Ok(v) = val.parse::<usize>() {
+                if v > 0 {
+                    SMB_CFG_MAX_READ_OFFSET_CACHE_SIZE = v;
+                } else {
+                    SCLogError!("Invalid max-read-offset-cache-size value");
+                }
+            } else {
+                SCLogError!("Invalid max-read-offset-cache-size value");
+            }
+        }
+        let retval = conf_get("app-layer.protocols.smb.max-tree-cache-size");
+        if let Some(val) = retval {
+            if let Ok(v) = val.parse::<usize>() {
+                if v > 0 {
+                    SMB_CFG_MAX_TREE_CACHE_SIZE = v;
+                } else {
+                    SCLogError!("Invalid max-tree-cache-size value");
+                }
+            } else {
+                SCLogError!("Invalid max-tree-cache-size value");
+            }
+        }
+        let retval = conf_get("app-layer.protocols.smb.max-dcerpc-frag-cache-size");
+        if let Some(val) = retval {
+            if let Ok(v) = val.parse::<usize>() {
+                if v > 0 {
+                    SMB_CFG_MAX_FRAG_CACHE_SIZE = v;
+                } else {
+                    SCLogError!("Invalid max-dcerpc-frag-cache-size value");
+                }
+            } else {
+                SCLogError!("Invalid max-dcerpc-frag-cache-size value");
+            }
+        }
+        let retval = conf_get("app-layer.protocols.smb.max-session-cache-size");
+        if let Some(val) = retval {
+            if let Ok(v) = val.parse::<usize>() {
+                if v > 0 {
+                    SMB_CFG_MAX_SSN2VEC_CACHE_SIZE = v;
+                } else {
+                    SCLogError!("Invalid max-session-cache-size value");
+                }
+            } else {
+                SCLogError!("Invalid max-session-cache-size value");
+            }
+        }
         SCLogConfig!("read: max record size: {}, max queued chunks {}, max queued size {}",
                 SMB_CFG_MAX_READ_SIZE, SMB_CFG_MAX_READ_QUEUE_CNT, SMB_CFG_MAX_READ_QUEUE_SIZE);
         SCLogConfig!("write: max record size: {}, max queued chunks {}, max queued size {}",
                 SMB_CFG_MAX_WRITE_SIZE, SMB_CFG_MAX_WRITE_QUEUE_CNT, SMB_CFG_MAX_WRITE_QUEUE_SIZE);
+        SCLogConfig!("guid: max cache size: {}", SMB_CFG_MAX_GUID_CACHE_SIZE);
     } else {
         SCLogDebug!("Protocol detector and parser disabled for SMB.");
     }

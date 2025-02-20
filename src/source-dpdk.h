@@ -21,8 +21,8 @@
  * \author Lukas Sismis <lukas.sismis@gmail.com>
  */
 
-#ifndef __SOURCE_DPDK_H__
-#define __SOURCE_DPDK_H__
+#ifndef SURICATA_SOURCE_DPDK_H
+#define SURICATA_SOURCE_DPDK_H
 
 #include "suricata-common.h"
 
@@ -38,10 +38,17 @@ typedef enum { DPDK_COPY_MODE_NONE, DPDK_COPY_MODE_TAP, DPDK_COPY_MODE_IPS } Dpd
 // General flags
 #define DPDK_PROMISC   (1 << 0) /**< Promiscuous mode */
 #define DPDK_MULTICAST (1 << 1) /**< Enable multicast packets */
+#define DPDK_IRQ_MODE  (1 << 2) /**< Interrupt mode */
 // Offloads
 #define DPDK_RX_CHECKSUM_OFFLOAD (1 << 4) /**< Enable chsum offload */
 
 void DPDKSetTimevalOfMachineStart(void);
+
+typedef struct DPDKWorkerSync_ {
+    uint16_t worker_cnt;
+    SC_ATOMIC_DECLARE(uint16_t, worker_checked_in);
+} DPDKWorkerSync;
+
 typedef struct DPDKIfaceConfig_ {
 #ifdef HAVE_DPDK
     char iface[RTE_ETH_NAME_MAX_LEN];
@@ -59,6 +66,7 @@ typedef struct DPDKIfaceConfig_ {
     uint64_t rss_hf;
     /* set maximum transmission unit of the device in bytes */
     uint16_t mtu;
+    bool vlan_strip_enabled;
     uint16_t nb_rx_queues;
     uint16_t nb_rx_desc;
     uint16_t nb_tx_queues;
@@ -69,7 +77,8 @@ typedef struct DPDKIfaceConfig_ {
     SC_ATOMIC_DECLARE(unsigned int, ref);
     /* threads bind queue id one by one */
     SC_ATOMIC_DECLARE(uint16_t, queue_id);
-    SC_ATOMIC_DECLARE(uint16_t, inconsitent_numa_cnt);
+    SC_ATOMIC_DECLARE(uint16_t, inconsistent_numa_cnt);
+    DPDKWorkerSync *workers_sync;
     void (*DerefFunc)(void *);
 
     struct rte_flow *flow[100];
@@ -91,4 +100,4 @@ typedef struct DPDKPacketVars_ {
 void TmModuleReceiveDPDKRegister(void);
 void TmModuleDecodeDPDKRegister(void);
 
-#endif /* __SOURCE_DPDK_H__ */
+#endif /* SURICATA_SOURCE_DPDK_H */

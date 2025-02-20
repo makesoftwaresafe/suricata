@@ -1,4 +1,4 @@
-/* Copyright (C) 2017-2021 Open Information Security Foundation
+/* Copyright (C) 2017-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -24,10 +24,14 @@ use nom7::number::streaming::be_u32;
 use der_parser::der::der_read_element_header;
 use der_parser::ber::Class;
 use kerberos_parser::krb5_parser;
-use kerberos_parser::krb5::{EncryptionType,ErrorCode,MessageType,PrincipalName,Realm};
+use kerberos_parser::krb5::{EncryptionType,ErrorCode,MessageType,PrincipalName,Realm,KrbError};
+use asn1_rs::FromDer;
+use suricata_sys::sys::AppProto;
 use crate::applayer::{self, *};
 use crate::core;
-use crate::core::{AppProto,Flow,ALPROTO_FAILED,ALPROTO_UNKNOWN,Direction};
+use crate::core::{ALPROTO_FAILED,ALPROTO_UNKNOWN, IPPROTO_TCP, IPPROTO_UDP};
+use crate::direction::Direction;
+use crate::flow::Flow;
 
 #[derive(AppLayerEvent)]
 pub enum KRB5Event {
@@ -203,7 +207,7 @@ impl KRB5State {
                         self.req_id = 0;
                     },
                     30 => {
-                        let res = krb5_parser::parse_krb_error(i);
+                        let res = KrbError::from_der(i);
                         if let Ok((_,error)) = res {
                             let mut tx = self.new_tx(direction);
                             if self.req_id > 0 {
@@ -363,6 +367,9 @@ pub unsafe extern "C" fn rs_krb5_probing_parser(_flow: *const Flow,
         input:*const u8, input_len: u32,
         _rdir: *mut u8) -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice = build_slice!(input,input_len as usize);
     let alproto = ALPROTO_KRB5;
     if slice.len() <= 10 { return ALPROTO_FAILED; }
@@ -402,6 +409,9 @@ pub unsafe extern "C" fn rs_krb5_probing_parser_tcp(_flow: *const Flow,
         input:*const u8, input_len: u32,
         rdir: *mut u8) -> AppProto
 {
+    if input.is_null() {
+        return ALPROTO_UNKNOWN;
+    }
     let slice = build_slice!(input,input_len as usize);
     if slice.len() <= 14 { return ALPROTO_FAILED; }
     match be_u32(slice) as IResult<&[u8],u32> {
@@ -421,7 +431,7 @@ pub unsafe extern "C" fn rs_krb5_probing_parser_tcp(_flow: *const Flow,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_parse_request(_flow: *const core::Flow,
+pub unsafe extern "C" fn rs_krb5_parse_request(_flow: *const Flow,
                                        state: *mut std::os::raw::c_void,
                                        _pstate: *mut std::os::raw::c_void,
                                        stream_slice: StreamSlice,
@@ -436,7 +446,7 @@ pub unsafe extern "C" fn rs_krb5_parse_request(_flow: *const core::Flow,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_parse_response(_flow: *const core::Flow,
+pub unsafe extern "C" fn rs_krb5_parse_response(_flow: *const Flow,
                                        state: *mut std::os::raw::c_void,
                                        _pstate: *mut std::os::raw::c_void,
                                        stream_slice: StreamSlice,
@@ -451,7 +461,7 @@ pub unsafe extern "C" fn rs_krb5_parse_response(_flow: *const core::Flow,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_parse_request_tcp(_flow: *const core::Flow,
+pub unsafe extern "C" fn rs_krb5_parse_request_tcp(_flow: *const Flow,
                                        state: *mut std::os::raw::c_void,
                                        _pstate: *mut std::os::raw::c_void,
                                        stream_slice: StreamSlice,
@@ -509,7 +519,7 @@ pub unsafe extern "C" fn rs_krb5_parse_request_tcp(_flow: *const core::Flow,
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn rs_krb5_parse_response_tcp(_flow: *const core::Flow,
+pub unsafe extern "C" fn rs_krb5_parse_response_tcp(_flow: *const Flow,
                                        state: *mut std::os::raw::c_void,
                                        _pstate: *mut std::os::raw::c_void,
                                        stream_slice: StreamSlice,
@@ -566,8 +576,8 @@ pub unsafe extern "C" fn rs_krb5_parse_response_tcp(_flow: *const core::Flow,
     AppLayerResult::ok()
 }
 
-export_tx_data_get!(rs_krb5_get_tx_data, KRB5Transaction);
-export_state_data_get!(rs_krb5_get_state_data, KRB5State);
+export_tx_data_get!(krb5_get_tx_data, KRB5Transaction);
+export_state_data_get!(krb5_get_state_data, KRB5State);
 
 const PARSER_NAME : &[u8] = b"krb5\0";
 
@@ -598,11 +608,10 @@ pub unsafe extern "C" fn rs_register_krb5_parser() {
         localstorage_free  : None,
         get_tx_files       : None,
         get_tx_iterator    : Some(applayer::state_get_tx_iterator::<KRB5State, KRB5Transaction>),
-        get_tx_data        : rs_krb5_get_tx_data,
-        get_state_data     : rs_krb5_get_state_data,
+        get_tx_data        : krb5_get_tx_data,
+        get_state_data     : krb5_get_state_data,
         apply_tx_config    : None,
         flags              : 0,
-        truncate           : None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };
@@ -615,6 +624,7 @@ pub unsafe extern "C" fn rs_register_krb5_parser() {
         if AppLayerParserConfParserEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {
             let _ = AppLayerRegisterParser(&parser, alproto);
         }
+        AppLayerParserRegisterLogger(IPPROTO_UDP, ALPROTO_KRB5);
     } else {
         SCLogDebug!("Protocol detector and parser disabled for KRB5/UDP.");
     }
@@ -632,6 +642,7 @@ pub unsafe extern "C" fn rs_register_krb5_parser() {
         if AppLayerParserConfParserEnabled(ip_proto_str.as_ptr(), parser.name) != 0 {
             let _ = AppLayerRegisterParser(&parser, alproto);
         }
+        AppLayerParserRegisterLogger(IPPROTO_TCP, ALPROTO_KRB5);
     } else {
         SCLogDebug!("Protocol detector and parser disabled for KRB5/TCP.");
     }

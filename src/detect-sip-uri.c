@@ -52,7 +52,6 @@
 #include "stream-tcp.h"
 
 #include "rust.h"
-#include "app-layer-sip.h"
 
 #define KEYWORD_NAME "sip.uri"
 #define KEYWORD_DOC  "sip-keywords.html#sip-uri"
@@ -106,11 +105,11 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
 
 void DetectSipUriRegister(void)
 {
-    sigmatch_table[DETECT_AL_SIP_URI].name = KEYWORD_NAME;
-    sigmatch_table[DETECT_AL_SIP_URI].desc = "sticky buffer to match on the SIP URI";
-    sigmatch_table[DETECT_AL_SIP_URI].url = "/rules/" KEYWORD_DOC;
-    sigmatch_table[DETECT_AL_SIP_URI].Setup = DetectSipUriSetup;
-    sigmatch_table[DETECT_AL_SIP_URI].flags |= SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_SIP_URI].name = KEYWORD_NAME;
+    sigmatch_table[DETECT_SIP_URI].desc = "sticky buffer to match on the SIP URI";
+    sigmatch_table[DETECT_SIP_URI].url = "/rules/" KEYWORD_DOC;
+    sigmatch_table[DETECT_SIP_URI].Setup = DetectSipUriSetup;
+    sigmatch_table[DETECT_SIP_URI].flags |= SIGMATCH_NOOPT;
 
     DetectAppLayerInspectEngineRegister(BUFFER_NAME, ALPROTO_SIP, SIG_FLAG_TOSERVER, 0,
             DetectEngineInspectBufferGeneric, GetData);

@@ -317,6 +317,11 @@ the global config is documented.
       #decoder-events-prefix: "decoder.event"
       # Add stream events as stats.
       #stream-events: false
+      # Exception policy stats counters options
+      # (Note: if exception policy: ignore, counters are not logged)
+      exception-policy:
+        #per-app-proto-errors: false  # default: false. True will log errors for
+                                        # each app-proto. Warning: VERY verbose
 
 Statistics can be `enabled` or disabled here.
 
@@ -338,6 +343,10 @@ See `issue 2225 <https://redmine.openinfosecfoundation.org/issues/2225>`_.
 Similar to the `decoder-events` option, the `stream-events` option controls
 whether the stream-events are added as counters as well. This is disabled by
 default.
+
+If any exception policy is enabled, stats counters are logged. To control
+verbosity for application layer protocol errors, leave `per-app-proto-errors`
+as false.
 
 Outputs
 ~~~~~~~
@@ -394,6 +403,9 @@ The format is documented in :ref:`Eve JSON Format <eve-json-format>`.
 TLS parameters and certificates logging (tls.log)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+.. attention:: tls-log is deprecated in Suricata 8.0 and will be
+               removed in Suricata 9.0.
+
 The TLS handshake parameters can be logged in a line based log as well.
 By default, the logfile is `tls.log` in the suricata log directory.
 See :ref:`Custom TLS logging <output-custom-tls-logging>` for details
@@ -414,6 +426,9 @@ Example:
 
 A line based log of HTTP requests (http.log)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. attention:: http-log is deprecated in Suricata 8.0 and will be
+               removed in Suricata 9.0.
 
 This log keeps track of all HTTP-traffic events. It contains the HTTP
 request, hostname, URI and the User-Agent. This information will be
@@ -457,8 +472,8 @@ look at all packets whenever you want.  In the normal mode a pcap file
 is created in the default-log-dir. It can also be created elsewhere if
 a absolute path is set in the yaml-file.
 
-The file that is saved in example the default -log-dir
-/var/log/suricata, can be be opened with every program which supports
+The file that is saved in example the ``default-log-dir``
+`/var/log/suricata`, can be be opened with every program which supports
 the pcap file format. This can be Wireshark, TCPdump, Suricata, Snort
 and many others.
 
@@ -466,25 +481,13 @@ The pcap-log option can be enabled and disabled.
 
 There is a size limit for the pcap-log file that can be set. The
 default limit is 32 MB. If the log-file reaches this limit, the file
-will be rotated and a new one will be created. The pcap-log option
-has an extra functionality for "Sguil":http://sguil.sourceforge.net/
-that can be enabled in the 'mode' option. In the sguil mode the
-"sguil_base_dir" indicates the base directory. In this base dir the
-pcaps are created in a Sguil-specific directory structure that is
-based on the day:
-
-::
-
-  $sguil_base_dir/YYYY-MM-DD/$filename.<timestamp>
-
-If you would like to use Suricata with Sguil, do not forget to enable
-(and if necessary modify) the base dir in the suricata.yaml file.
+will be rotated and a new one will be created.
 Remember that in the 'normal' mode, the file will be saved in
 default-log-dir or in the absolute path (if set).
 
 The pcap files can be compressed before being written to disk by setting
-the compression option to lz4. This option is incompatible with sguil
-mode. Note: On Windows, this option increases disk I/O instead of
+the compression option to lz4.
+Note: On Windows, this option increases disk I/O instead of
 reducing it. When using lz4 compression, you can enable checksums using
 the lz4-checksum option, and you can set the compression level lz4-level
 to a value between 0 and 16, where higher levels result in higher
@@ -514,9 +517,29 @@ the alert.
       # Limit in MB.
       limit: 32
 
-      mode: sguil # "normal" (default) or sguil.
-      sguil_base_dir: /nsm_data/
+      mode: normal # "normal" or multi
       conditional: alerts
+
+In ``normal`` mode a pcap file "filename" is created in the default-log-dir or as
+specified by "dir". ``normal`` mode is generally not as performant as ``multi``
+mode.
+
+In multi mode, multiple pcap files are created (per thread) which performs
+better than ``normal`` mode.
+
+In multi mode the filename takes a few special variables:
+  - %n representing the thread number
+  - %i representing the thread id
+  - %t representing the timestamp (secs or secs.usecs based on 'ts-format')
+  
+  Example: filename: pcap.%n.%t
+
+.. note:: It is possible to use directories but the directories are not
+  created by Suricata. For example ``filename: pcaps/%n/log.%s`` will log into
+  the pre-existing ``pcaps`` directory and per thread sub directories.
+  
+.. note:: that the limit and max-files settings are enforced per thread. So the
+  size limit using 8 threads with 1000mb files and 2000 files is about 16TiB.
 
 Verbose Alerts Log (alert-debug.log)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -557,6 +580,10 @@ section as described above.
 
 Syslog
 ~~~~~~
+
+.. attention:: The syslog output is deprecated in Suricata 8.0 and
+               will be removed in Suricata 9.0. Please migrate to the
+               ``eve`` output which has the ability to send to syslog.
 
 With this option it is possible to send all alert and event output to syslog.
 
@@ -632,6 +659,8 @@ The detection-engine builds internal groups of signatures. Suricata loads signat
       toserver-groups: 25
     sgh-mpm-context: auto
     inspection-recursion-limit: 3000
+    stream-tx-log-limit: 4
+    guess-applayer-tx: no
 
 At all of these options, you can add (or change) a value. Most
 signatures have the adjustment to focus on one direction, meaning
@@ -656,15 +685,26 @@ For setting the option sgh-mpm-context, you can choose from auto, full
 or single. The default setting is 'auto', meaning Suricata selects
 full or single based on the algorithm you use. 'Full' means that every
 group has its own MPM-context, and 'single' that all groups share one
-MPM-context. The two algorithms ac and ac-gfbs are new in 1.03. These
-algorithms use a single MPM-context if the Sgh-MPM-context setting is
-'auto'. The rest of the algorithms use full in that case.
+MPM-context. The algorithm "ac" uses a single MPM-context if the 
+Sgh-MPM-context setting is 'auto'. The rest of the algorithms use full 
+in that case.
 
 The inspection-recursion-limit option has to mitigate that possible
 bugs in Suricata cause big problems. Often Suricata has to deal with
 complicated issues. It could end up in an 'endless loop' due to a bug,
 meaning it will repeat its actions over and over again. With the
 option inspection-recursion-limit you can limit this action.
+
+The ``stream-tx-log-limit`` defines the maximum number of times a
+transaction will get logged for rules without app-layer keywords.
+This is meant to avoid logging the same data an arbitrary number
+of times.
+
+The ``guess-applayer-tx`` option controls whether the engine will try to guess
+and tie a transaction to a given alert if the matching signature doesn't have
+app-layer keywords. If enabled, AND ONLY ONE LIVE TRANSACTION EXISTS, that
+transaction's data will be added to the alert metadata. Note that this may not
+be the expected data, from an analyst's perspective.
 
 *Example 4	Detection-engine grouping tree*
 
@@ -722,6 +762,22 @@ To let Suricata make these decisions set default to 'auto':
     prefilter:
       default: auto
 
+.. _suricata-yaml-thresholds:
+
+Thresholding Settings
+~~~~~~~~~~~~~~~~~~~~~
+
+Thresholding uses a central hash table for tracking thresholds of the types: by_src, by_dst, by_both.
+
+::
+
+  detect:
+    thresholds:
+      hash-size: 16384
+      memcap: 16mb
+
+``detect.thresholds.hash-size`` controls the number of hash rows in the hash table.
+``detect.thresholds.memcap`` controls how much memory can be used for the hash table and the data stored in it.
 
 Pattern matcher settings
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1013,7 +1069,7 @@ what to do in case memcap is hit: 'drop-packet', 'pass-packet', 'reject', or
   flow:
     memcap: 33554432              #The maximum amount of bytes the flow-engine will make use of.
     memcap-policy: bypass         #How to handle the flow if memcap is reached (IPS mode)
-    hash_size: 65536              #Flows will be organized in a hash-table. With this option you can set the
+    hash-size: 65536              #Flows will be organized in a hash-table. With this option you can set the
                                   #size of the hash-table.
     Prealloc: 10000               #The amount of flows Suricata has to keep ready in memory.
 
@@ -1022,21 +1078,20 @@ flow-engine goes into the emergency-mode. In this mode, the engine
 will make use of shorter time-outs. It lets flows expire in a more
 aggressive manner so there will be more space for new Flows.
 
-There are two options: emergency_recovery and prune_flows. The
-emergency recovery is set on 30. This is the percentage of prealloc'd
-flows after which the flow-engine will be back to normal (when 30
-percent of the 10000 flows is completed).
+``emergency-recovery`` defines the percentage of flows that the engine needs to
+prune before clearing the **emergency mode**. The default ``emergency-recovery``
+value is 30. This is the percentage of prealloc'd flows after which the flow
+-engine will be back to normal (when 30 percent of the 10000 flows are
+completed).
 
-	If during the emergency-mode, the aggressive time-outs do not
+	If during the **emergency-mode** the aggressive time-outs do not
 	have the desired result, this option is the final resort. It
 	ends some flows even if they have not reached their time-outs
-	yet. The prune-flows option shows how many flows there will be
-	terminated at each time a new flow is set up.
+	yet.
 
 ::
 
-  emergency_recovery: 30                  #Percentage of 1000 prealloc'd flows.
-  prune_flows: 5                          #Amount of flows being terminated during the emergency mode.
+  emergency-recovery: 30                  #Percentage of 10000 prealloc'd flows.
 
 Flow Time-Outs
 ~~~~~~~~~~~~~~
@@ -1072,27 +1127,27 @@ UDP, ICMP and default (all other protocols).
       new: 30                     #Time-out in seconds after the last activity in this flow in a New state.
       established: 300            #Time-out in seconds after the last activity in this flow in a Established
                                   #state.
-      emergency_new: 10           #Time-out in seconds after the last activity in this flow in a New state
+      emergency-new: 10           #Time-out in seconds after the last activity in this flow in a New state
                                   #during the emergency mode.
-      emergency_established: 100  #Time-out in seconds after the last activity in this flow in a Established
+      emergency-established: 100  #Time-out in seconds after the last activity in this flow in a Established
                                   #state in the emergency mode.
     tcp:
       new: 60
       established: 3600
       closed: 120
-      emergency_new: 10
-      emergency_established: 300
-      emergency_closed: 20
+      emergency-new: 10
+      emergency-established: 300
+      emergency-closed: 20
     udp:
       new: 30
       established: 300
-      emergency_new: 10
-      emergency_established: 100
+      emergency-new: 10
+      emergency-established: 100
     icmp:
       new: 30
       established: 300
-      emergency_new: 10
-      emergency_established: 100
+      emergency-new: 10
+      emergency-established: 100
 
 Stream-engine
 ~~~~~~~~~~~~~
@@ -1125,10 +1180,10 @@ option can be set off by entering 'no' instead of 'yes'.
   stream:
     memcap: 64mb                # Max memory usage (in bytes) for TCP session tracking
     memcap-policy: ignore       # In IPS mode, call memcap policy if memcap is reached
-    checksum_validation: yes    # Validate packet checksum, reject packets with invalid checksums.
+    checksum-validation: yes    # Validate packet checksum, reject packets with invalid checksums.
 
 To mitigate Suricata from being overloaded by fast session creation,
-the option prealloc_sessions instructs Suricata to keep a number of
+the option prealloc-sessions instructs Suricata to keep a number of
 sessions ready in memory.
 
 A TCP-session starts with the three-way-handshake. After that, data
@@ -1159,10 +1214,10 @@ anomalies in streams. See :ref:`host-os-policy`.
 
 ::
 
-    prealloc_sessions: 32768     # 32k sessions prealloc'd
+    prealloc-sessions: 32768     # 32k sessions prealloc'd
     midstream: false             # do not allow midstream session pickups
     midstream-policy: drop-flow  # in IPS mode, drop flows that start midstream
-    async_oneside: false         # do not enable async stream handling
+    async-oneside: false         # do not enable async stream handling
     inline: no                   # stream inline mode
     drop-invalid: yes            # drop invalid packets
     bypass: no
@@ -1209,7 +1264,7 @@ this is 1MB. This setting can be overridden per stream by the protocol
 parsers that do file extraction.
 
 Inspection of reassembled data is done in chunks. The size of these
-chunks is set with ``toserver_chunk_size`` and ``toclient_chunk_size``.
+chunks is set with ``toserver-chunk-size`` and ``toclient-chunk-size``.
 To avoid making the borders predictable, the sizes can be varied by
 adding in a random factor.
 
@@ -1219,8 +1274,8 @@ adding in a random factor.
       memcap: 256mb             # Memory reserved for stream data reconstruction (in bytes)
       memcap-policy: ignore     # What to do when memcap for reassembly is hit
       depth: 1mb                # The depth of the reassembling.
-      toserver_chunk_size: 2560 # inspect raw stream in chunks of at least this size
-      toclient_chunk_size: 2560 # inspect raw stream in chunks of at least
+      toserver-chunk-size: 2560 # inspect raw stream in chunks of at least this size
+      toclient-chunk-size: 2560 # inspect raw stream in chunks of at least
       randomize-chunk-size: yes
       #randomize-chunk-range: 10
 
@@ -1255,6 +1310,58 @@ network inspection.
 .. image:: suricata-yaml/reassembly1.png
 
 .. image:: suricata-yaml/IDS_chunk_size.png
+
+
+TCP Urgent Handling
+^^^^^^^^^^^^^^^^^^^
+
+TCP Urgent pointer support is a complicated topic, where it is essentially impossible
+for a network device to know with certainty what the behavior of the receiving host is.
+
+For this reason, many middleboxes strip the URG flag and reset the urgent pointer (see
+for example RFC 6093, 3.4).
+
+Several options are provided to control how to deal with the urgent pointer.
+
+::
+
+    stream:
+      reassembly:
+      urgent:
+        policy: oob              # drop, inline, oob (1 byte, see RFC 6093, 3.1), gap
+        oob-limit-policy: drop
+
+`stream.reassembly.urgent.policy`:
+ - `drop`: drop URG packets before they affect the stream engine
+ - `inline`: ignore the urgent pointer and process all data inline
+ - `oob` (out of band): treat the last byte as out of band
+ - `gap`: skip the last byte, but do no adjust sequence offsets, leading to
+          gaps in the data
+
+If the urgent policy is set to `oob`, there is an additional setting. Since OOB data does
+advance the TCP sequence number, the stream engine tracks the number of bytes to make sure
+no GAPs in the non-OOB data are seen by the app-layer parsers and detection engine. This
+is currently limited to 64k per direction. If the number of OOB bytes exceeds that 64k, an
+additional policy is triggered: `stream.reassembly.urgent.oob-limit-policy`.
+
+`stream.reassembly.urgent.oob-limit-policy`:
+- `drop`: drop URG packets before they affect the stream engine
+- `inline`: ignore the urgent pointer and process all data inline
+- `gap`: skip the last byte, but do no adjust sequence offsets, leading to gaps in the data
+
+Observables
+"""""""""""
+
+Each packet with the URG flag set, will increment the `tcp.urg` counter.
+
+When dropping the URG packets, the packets will have the drop reason
+`ips.drop_reason.stream_urgent`, which is also a counter in the stats logging.
+
+The stream event `stream-event:reassembly_urgent_oob_limit_reached` allows matching on the
+packet that reaches the OOB limit. Stream rule `2210066` matches on this.
+
+If `stats.stream-events` are enabled the counter `stream.reassembly_urgent_oob_limit_reached`
+will be incremented if the OOB limit is reached.
 
 
 Host Tracking
@@ -1300,14 +1407,14 @@ the default behavior).
 
 Each supported protocol has a dedicated subsection under ``protocols``.
 
-Asn1_max_frames (new in 1.0.3 and 1.1)
+Asn1_max_frames
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Asn1 (`Abstract Syntax One
 <http://en.wikipedia.org/wiki/Abstract_Syntax_Notation_One>`_) is a
 standard notation to structure and describe data.
 
-Within Asn1_max_frames there are several frames. To protect itself,
+Within Asn1-max-frames there are several frames. To protect itself,
 Suricata will inspect a maximum of 256. You can set this amount
 differently if wanted.
 
@@ -1320,7 +1427,7 @@ Limit for the maximum number of asn1 frames to decode (default 256):
 
 ::
 
-   asn1_max_frames: 256
+   asn1-max-frames: 256
 
 .. _suricata-yaml-configure-ftp:
 
@@ -1540,6 +1647,10 @@ use of libhtp.
        #compression-bomb-limit: 1 Mb
        # Maximum time spent decompressing a single transaction in usec
        #decompression-time-limit: 100000
+       # Maximum number of live transactions per flow
+       #max-tx: 512
+       # Maximum used number of HTTP1 headers in one request or response
+       #headers-limit: 1024
 
 Other parameters are customizable from Suricata.
 ::
@@ -1633,6 +1744,38 @@ the limits are exceeded, and an event will be raised.
 
 `max-write-queue-size` and `max-write-queue-cnt` are as the READ variants,
 but then for WRITEs.
+
+Cache limits
+^^^^^^^^^^^^
+
+The SMB parser uses several per flow caches to track data between different records
+and transactions. These caches have a size ceiling. When the size limit is reached,
+new additions will automatically evict the oldest entries.
+
+::
+
+    smb:
+      max-guid-cache-size: 1024
+      max-rec-offset-cache-size: 128
+      max-tree-cache-size: 512
+      max-dcerpc-frag-cache-size: 128
+      max-session-cache-size: 512
+
+The `max-guid-cache-size` setting controls the size of the hash that maps the GUID to
+filenames. These are added through CREATE commands and removed by CLOSE commands.
+
+`max-rec-offset-cache-size` controls the size of the hash that maps the READ offset
+from READ commands to the READ responses.
+
+The `max-tree-cache-size` option contols the size of the SMB session to SMB tree hash.
+
+`max-dcerpc-frag-cache-size` controls the size of the hash that tracks partial DCERPC
+over SMB records. These are buffered in this hash to only parse the DCERPC record when
+it is fully reassembled.
+
+The `max-session-cache-size` setting controls the size of a generic hash table that maps
+SMB session to filenames, GUIDs and share names.
+
 
 Configure HTTP2
 ~~~~~~~~~~~~~~~
@@ -1761,7 +1904,8 @@ incompatible with ``decode-mime``. If both are enabled,
 Maximum transactions
 ~~~~~~~~~~~~~~~~~~~~
 
-MQTT, FTP, PostgreSQL, SMB, DCERPC and NFS have each a `max-tx` parameter that can be customized.
+SMTP, MQTT, FTP, PostgreSQL, SMB, DCERPC, HTTP1, ENIP and NFS have each a `max-tx`
+parameter that can be customized.
 `max-tx` refers to the maximum number of live transactions for each flow.
 An app-layer event `protocol.too_many_transactions` is triggered when this value is reached.
 The point of this parameter is to find a balance between the completeness of analysis
@@ -1782,23 +1926,23 @@ generated alerts and events.
 
 The engine logging system has the following log levels:
 
-- error
-- warning
-- notice
-- info
-- perf
-- config
-- debug
+- ``error``
+- ``warning``
+- ``notice``
+- ``info``
+- ``perf``
+- ``config``
+- ``debug``
 
 Note that debug level logging will only be emitted if Suricata was
 compiled with the ``--enable-debug`` configure option.
 
 The first option within the logging configuration is the
-default-log-level. This option determines the severity/importance
+``default-log-level``. This option determines the severity/importance
 level of information that will be displayed. Messages of lower levels
 than the one set here, will not be shown. The default setting is
-Info. This means that error, warning and info will be shown and the
-other levels won't be.
+``Notice``. This means that ``error``, ``warning`` and ``notice`` will be shown
+and messages for the other levels won't be.
 
 Default Configuration Example
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1873,14 +2017,15 @@ Default Log Format
 ~~~~~~~~~~~~~~~~~~
 
 A logging line exists of two parts. First it displays meta information
-(thread id, date etc.), and finally the actual log message. Example:
+(Log-level, Suricata module), and finally the actual log message. Example:
 
 ::
 
-  [27708] 15/10/2010 -- 11:40:07 - (suricata.c:425) <Info> (main) – This is Suricata version 1.0.2
+  i: suricata: This is Suricata version 7.0.2 RELEASE running in USER mode
 
-(Here the part until the – is the meta info, "This is Suricata 1.0.2"
-is the actual message.)
+(Here the part until the second `:` is the meta info, 
+"This is Suricata version 7.0.2 RELEASE running in USER mode" is the actual 
+message.)
 
 It is possible to determine which information will be displayed in
 this line and (the manner how it will be displayed) in which format it
@@ -1903,15 +2048,15 @@ specified signs:
   S:      Subsystem name.
   T:      Thread name.
   M:      Log message body.
-  f:      Filename. Name of C-file (source code) where log-event is generated.
-  l:      Line-number within the filename, where the log-event is generated in the source-code.
-  n:      Function-name in the C-code (source code).
+  f:      Name of source code filename where log-event is generated.
+  l:      Line-number within the source filename, where the log-event is generated.
+  n:      Function-name in the source code.
 
 
 The last three options, f, l and n, are mainly convenient for developers.
 
 The log-format can be overridden in the command line by the
-environment variable: SC_LOG_FORMAT
+environment variable: ``SC_LOG_FORMAT``.
 
 Output Filter
 ~~~~~~~~~~~~~
@@ -1923,9 +2068,9 @@ matches.
 
 ::
 
-  default-output-filter:               #In this option the regular expression can be entered.
+  default-output-filter:    # In this option the regular expression can be entered.
 
-This value is overridden by the environment var: SC_LOG_OP_FILTER
+This value is overridden by the environment var: ``SC_LOG_OP_FILTER``.
 
 Logging Outputs
 ~~~~~~~~~~~~~~~
@@ -1939,18 +2084,18 @@ computers etc.)
 ::
 
   outputs:
-    - console:                                    #Output on your screen.
-        enabled: yes                              #This option is enabled.
-        #level: notice                            #Use a different level than the default.
-    - file:                                       #Output stored in a file.
-        enabled: no                               #This option is not enabled.
-        filename: /var/log/suricata.log           #Filename and location on disc.
-        level: info                               #Use a different level than the default.
-    - syslog:                                     #This is a program to direct log-output to several directions.
-        enabled: no                               #The use of this program is not enabled.
-        facility: local5                          #In this option you can set a syslog facility.
-        format: "[%i] <%d> -- "                   #The option to set your own format.
-        #level: notice                            #Use a different level than the default.
+    - console:                          # Output to screen (stdout/stderr).
+        enabled: yes                    # This option is enabled.
+        #level: notice                  # Use a different level than the default.
+    - file:                             # Output stored in a file.
+        enabled: no                     # This option is not enabled.
+        filename: /var/log/suricata.log # Filename and location on disc.
+        level: info                     # Use a different level than the default.
+    - syslog:                           # Output using syslog.
+        enabled: no                     # The use of this program is not enabled.
+        facility: local5                # Syslog facility to use.
+        format: "[%i] <%d> -- "         # Output format specific to syslog.
+        #level: notice                  # Use a different level than the default.
 
 Packet Acquisition
 ------------------
@@ -2129,7 +2274,11 @@ size of the cache is covered in the YAML file.
 To be able to run DPDK on Intel cards, it is required to change the default
 Intel driver to either `vfio-pci` or `igb_uio` driver. The process is
 described in `DPDK manual page regarding Linux drivers
-<https://doc.dpdk.org/guides/linux_gsg/linux_drivers.html>`_.
+<https://doc.dpdk.org/guides/linux_gsg/linux_drivers.html>`_. 
+The Intel NICs have the amount of RX/TX descriptors capped at 4096.
+This should be possible to change by manually compiling the DPDK while
+changing the value of respective macros for the desired drivers
+(e.g. IXGBE_MAX_RING_DESC/I40E_MAX_RING_DESC).
 DPDK is natively supported by Mellanox and thus their NICs should work
 "out of the box".
 
@@ -2255,10 +2404,10 @@ Add the numbers of the options repeat_mark and route_queue to the NFQ-rule::
 
   nfq:
      mode: accept                 #By default the packet will be accepted or dropped by Suricata
-     repeat_mark: 1               #If the mode is set to 'repeat', the packets will be marked after being
+     repeat-mark: 1               #If the mode is set to 'repeat', the packets will be marked after being
                                   #processed by Suricata.
-     repeat_mask: 1
-     route_queue: 2               #Here you can assign the queue-number of the tool that Suricata has to
+     repeat-mask: 1
+     route-queue: 2               #Here you can assign the queue-number of the tool that Suricata has to
                                   #send the packets to after processing them.
 
 *Example 1 NFQ1*
@@ -2442,6 +2591,7 @@ address, you should enter 'any'.
     SHELLCODE_PORTS: "!80"
     ORACLE_PORTS: 1521
     SSH_PORTS: 22
+    SIP_PORTS: "[5060, 5061]"
 
 .. _host-os-policy:
 
@@ -2468,10 +2618,10 @@ use of.
   host-os-policy:
     windows: [0.0.0.0/0]
     bsd: []
-    bsd_right: []
-    old_linux: []
+    bsd-right: []
+    old-linux: []
     linux: [10.0.0.0/8, 192.168.1.100, "8762:2352:6241:7245:E000:0000:0000:0000"]
-    old_solaris: []
+    old-solaris: []
     solaris: ["::1"]
     hpux10: []
     hpux11: []
@@ -2485,6 +2635,8 @@ Engine analysis and profiling
 
 Suricata offers several ways of analyzing performance of rules and the
 engine itself.
+
+.. _config:engine-analysis:
 
 Engine-analysis
 ~~~~~~~~~~~~~~~
@@ -2580,6 +2732,9 @@ Example:
   Content negated: no
   Original content: abc
   Final content: bc
+
+
+.. _rule-and-packet-profiling-settings:
 
 Rule and Packet Profiling settings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2718,6 +2873,24 @@ Using this default configuration, Teredo detection will run on UDP port
 3544. If the `ports` parameter is missing, or set to `any`, all ports will be
 inspected for possible presence of Teredo.
 
+Recursion Level
+~~~~~~~~~~~~~~~
+
+Flow matching via recursion level can be disabled. It is enabled by
+default.
+
+::
+
+    decoder:
+      # Depending on packet pickup, incoming and outgoing tunnelled packets
+      # can be scanned before the kernel has stripped and encapsulated headers,
+      # respectively, leading to incoming and outgoing flows not being associated.
+      recursion-level:
+        use-for-tracking: true
+
+Using this default setting, flows will be associated only if the compared packet
+headers are encapsulated in the same number of headers.
+
 Advanced Options
 ----------------
 
@@ -2736,24 +2909,6 @@ to display the diagnostic message if a signal unexpectedly terminates Suricata -
         # message with the offending stacktrace if enabled.
         #stacktrace-on-signal: on
 
-luajit
-~~~~~~
-
-states
-^^^^^^
-
-Luajit has a strange memory requirement, it's 'states' need to be in the
-first 2G of the process' memory. For this reason when luajit is used the
-states are allocated at the process startup. This option controls how many
-states are preallocated.
-
-If the pool is depleted a warning is generated. Suricata will still try to
-continue, but may fail if other parts of the engine take too much memory.
-If the pool was depleted a hint will be printed at the engines exit.
-
-States are allocated as follows: for each detect script a state is used per
-detect thread. For each output script, a single state is used. Keep in
-mind that a rule reload temporary doubles the states requirement.
 
 .. _deprecation policy: https://suricata.io/about/deprecation-policy/
 
@@ -2779,11 +2934,14 @@ Beyond suricata.yaml, other ways to harden Suricata are
 - compilation : enabling ASLR and other exploit mitigation techniques.
 - environment : running Suricata on a device that has no direct access to Internet.
 
+.. _suricata-yaml-lua-config:
+
 Lua
 ~~~
 
-Suricata 7.0 disables Lua rules by default. Lua rules can be enabled
-in the ``security.lua`` section of the configuration file:
+Suricata 8.0 sandboxes Lua rules by default. The restrictions on the sandbox for Lua rules can be
+modified in the ``security.lua`` section of the configuration file.  Additionally, Lua rules 
+can be completely disabled the same as the Suricata 7.0 default:
 
 ::
 
@@ -2791,4 +2949,13 @@ in the ``security.lua`` section of the configuration file:
      lua:
        # Allow Lua rules. Disabled by default.
        #allow-rules: false
+
+       # Upper bound of allocations by a Lua rule before it will fail
+       #max-bytes: 500000 
+
+       # Upper bound of lua instructions by a Lua rule before it will fail
+       #max-instructions: 500000
+
+       # Allow dangerous lua operations like external packages and file io
+       #allow-restricted-functions: false
 

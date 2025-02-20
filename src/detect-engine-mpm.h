@@ -21,9 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_ENGINE_MPM_H__
-#define __DETECT_ENGINE_MPM_H__
-
+#ifndef SURICATA_DETECT_ENGINE_MPM_H
+#define SURICATA_DETECT_ENGINE_MPM_H
 
 #include "detect.h"
 
@@ -46,13 +45,8 @@ void PatternMatchThreadPrepare(MpmThreadCtx *, uint16_t type);
 
 void PatternMatchDestroy(MpmCtx *, uint16_t);
 void PatternMatchThreadDestroy(MpmThreadCtx *mpm_thread_ctx, uint16_t);
-void PatternMatchThreadPrint(MpmThreadCtx *, uint16_t);
 
 int PatternMatchPrepareGroup(DetectEngineCtx *, SigGroupHead *);
-void DetectEngineThreadCtxInfo(ThreadVars *, DetectEngineThreadCtx *);
-
-TmEcode DetectEngineThreadCtxInit(ThreadVars *, void *, void **);
-TmEcode DetectEngineThreadCtxDeinit(ThreadVars *, void *);
 
 int SignatureHasPacketContent(const Signature *);
 int SignatureHasStreamContent(const Signature *);
@@ -93,6 +87,9 @@ typedef int (*PrefilterRegisterFunc)(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
 void DetectAppLayerMpmRegister(const char *name, int direction, int priority,
         PrefilterRegisterFunc PrefilterRegister, InspectionBufferGetDataPtr GetData,
         AppProto alproto, int tx_min_progress);
+void DetectAppLayerMpmMultiRegister(const char *name, int direction, int priority,
+        PrefilterRegisterFunc PrefilterRegister, InspectionMultiBufferGetDataPtr GetData,
+        AppProto alproto, int tx_min_progress);
 void DetectAppLayerMpmRegisterByParentId(
         DetectEngineCtx *de_ctx,
         const int id, const int parent_id,
@@ -116,8 +113,6 @@ void DetectEngineFrameMpmRegister(DetectEngineCtx *de_ctx, const char *name, int
                 const DetectBufferMpmRegistry *mpm_reg, int list_id),
         AppProto alproto, uint8_t type);
 
-int PrefilterGenericMpmPktRegister(DetectEngineCtx *de_ctx, SigGroupHead *sgh, MpmCtx *mpm_ctx,
-        const DetectBufferMpmRegistry *mpm_reg, int list_id);
 
 int PrefilterGenericMpmFrameRegister(DetectEngineCtx *de_ctx, SigGroupHead *sgh, MpmCtx *mpm_ctx,
         const DetectBufferMpmRegistry *mpm_reg, int list_id);
@@ -125,6 +120,7 @@ int PrefilterGenericMpmFrameRegister(DetectEngineCtx *de_ctx, SigGroupHead *sgh,
 typedef struct PrefilterMpmListId {
     int list_id;
     const MpmCtx *mpm_ctx;
+    InspectionMultiBufferGetDataPtr GetData;
     const DetectEngineTransforms *transforms;
 } PrefilterMpmListId;
 
@@ -135,5 +131,4 @@ struct MpmListIdDataArgs {
 
 void EngineAnalysisAddAllRulePatterns(DetectEngineCtx *de_ctx, const Signature *s);
 
-#endif /* __DETECT_ENGINE_MPM_H__ */
-
+#endif /* SURICATA_DETECT_ENGINE_MPM_H */

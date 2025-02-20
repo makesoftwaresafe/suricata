@@ -21,12 +21,11 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_LUA_H__
-#define __DETECT_LUA_H__
-
-#ifdef HAVE_LUA
+#ifndef SURICATA_DETECT_LUA_H
+#define SURICATA_DETECT_LUA_H
 
 #include "util-lua.h"
+#include "util-lua-sandbox.h"
 
 typedef struct DetectLuaThreadData {
     lua_State *luastate;
@@ -34,9 +33,9 @@ typedef struct DetectLuaThreadData {
     int alproto;
 } DetectLuaThreadData;
 
-#define DETECT_LUAJIT_MAX_FLOWVARS  15
-#define DETECT_LUAJIT_MAX_FLOWINTS  15
-#define DETECT_LUAJIT_MAX_BYTEVARS  15
+#define DETECT_LUA_MAX_FLOWVARS 15
+#define DETECT_LUA_MAX_FLOWINTS 15
+#define DETECT_LUA_MAX_BYTEVARS 15
 
 typedef struct DetectLuaData {
     int thread_ctx_id;
@@ -45,18 +44,19 @@ typedef struct DetectLuaData {
     uint32_t flags;
     AppProto alproto;
     char *buffername; /* buffer name in case of a single buffer */
-    uint32_t flowint[DETECT_LUAJIT_MAX_FLOWINTS];
+    uint32_t flowint[DETECT_LUA_MAX_FLOWINTS];
     uint16_t flowints;
     uint16_t flowvars;
-    uint32_t flowvar[DETECT_LUAJIT_MAX_FLOWVARS];
+    uint32_t flowvar[DETECT_LUA_MAX_FLOWVARS];
     uint16_t bytevars;
-    uint32_t bytevar[DETECT_LUAJIT_MAX_BYTEVARS];
+    uint32_t bytevar[DETECT_LUA_MAX_BYTEVARS];
     uint32_t sid;
     uint32_t rev;
     uint32_t gid;
+    uint64_t alloc_limit;
+    uint64_t instruction_limit;
+    int allow_restricted_functions;
 } DetectLuaData;
-
-#endif /* HAVE_LUA */
 
 /* prototypes */
 void DetectLuaRegister (void);
@@ -66,5 +66,6 @@ int DetectLuaMatchBuffer(DetectEngineThreadCtx *det_ctx,
         Flow *f);
 
 void DetectLuaPostSetup(Signature *s);
+void LuaDumpStack(lua_State *state, const char *prefix);
 
-#endif /* __DETECT_LUA_H__ */
+#endif /* SURICATA_DETECT_LUA_H */

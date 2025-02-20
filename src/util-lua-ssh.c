@@ -48,11 +48,9 @@
 #include "util-time.h"
 #include "rust.h"
 
-#ifdef HAVE_LUA
-
-#include <lua.h>
-#include <lualib.h>
-#include <lauxlib.h>
+#include "lua.h"
+#include "lualib.h"
+#include "lauxlib.h"
 
 #include "util-lua.h"
 #include "util-lua-common.h"
@@ -66,8 +64,8 @@ static int GetServerProtoVersion(lua_State *luastate, const Flow *f)
     const uint8_t *protocol = NULL;
     uint32_t b_len = 0;
 
-    void *tx = rs_ssh_state_get_tx(state, 0);
-    if (rs_ssh_tx_get_protocol(tx, &protocol, &b_len, STREAM_TOCLIENT) != 1)
+    void *tx = SCSshStateGetTx(state, 0);
+    if (SCSshTxGetProtocol(tx, &protocol, &b_len, STREAM_TOCLIENT) != 1)
         return LuaCallbackError(luastate, "error: no server proto version");
     if (protocol == NULL || b_len == 0) {
         return LuaCallbackError(luastate, "error: no server proto version");
@@ -101,8 +99,8 @@ static int GetServerSoftwareVersion(lua_State *luastate, const Flow *f)
     const uint8_t *software = NULL;
     uint32_t b_len = 0;
 
-    void *tx = rs_ssh_state_get_tx(state, 0);
-    if (rs_ssh_tx_get_software(tx, &software, &b_len, STREAM_TOCLIENT) != 1)
+    void *tx = SCSshStateGetTx(state, 0);
+    if (SCSshTxGetSoftware(tx, &software, &b_len, STREAM_TOCLIENT) != 1)
         return LuaCallbackError(luastate, "error: no server software version");
     if (software == NULL || b_len == 0) {
         return LuaCallbackError(luastate, "error: no server software version");
@@ -136,8 +134,8 @@ static int GetClientProtoVersion(lua_State *luastate, const Flow *f)
     const uint8_t *protocol = NULL;
     uint32_t b_len = 0;
 
-    void *tx = rs_ssh_state_get_tx(state, 0);
-    if (rs_ssh_tx_get_protocol(tx, &protocol, &b_len, STREAM_TOSERVER) != 1)
+    void *tx = SCSshStateGetTx(state, 0);
+    if (SCSshTxGetProtocol(tx, &protocol, &b_len, STREAM_TOSERVER) != 1)
         return LuaCallbackError(luastate, "error: no client proto version");
     if (protocol == NULL || b_len == 0) {
         return LuaCallbackError(luastate, "error: no client proto version");
@@ -171,8 +169,8 @@ static int GetClientSoftwareVersion(lua_State *luastate, const Flow *f)
     const uint8_t *software = NULL;
     uint32_t b_len = 0;
 
-    void *tx = rs_ssh_state_get_tx(state, 0);
-    if (rs_ssh_tx_get_software(tx, &software, &b_len, STREAM_TOSERVER) != 1)
+    void *tx = SCSshStateGetTx(state, 0);
+    if (SCSshTxGetSoftware(tx, &software, &b_len, STREAM_TOSERVER) != 1)
         return LuaCallbackError(luastate, "error: no client software version");
     if (software == NULL || b_len == 0) {
         return LuaCallbackError(luastate, "error: no client software version");
@@ -215,5 +213,3 @@ int LuaRegisterSshFunctions(lua_State *luastate)
 
     return 0;
 }
-
-#endif /* HAVE_LUA */

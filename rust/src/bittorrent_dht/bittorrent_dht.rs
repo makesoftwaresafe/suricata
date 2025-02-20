@@ -15,11 +15,15 @@
  * 02110-1301, USA.
  */
 
+use suricata_sys::sys::AppProto;
+
 use crate::applayer::{self, *};
 use crate::bittorrent_dht::parser::{
     parse_bittorrent_dht_packet, BitTorrentDHTError, BitTorrentDHTRequest, BitTorrentDHTResponse,
 };
-use crate::core::{AppProto, Flow, ALPROTO_UNKNOWN, IPPROTO_UDP, Direction};
+use crate::core::{ALPROTO_UNKNOWN, IPPROTO_UDP};
+use crate::direction::Direction;
+use crate::flow::Flow;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
@@ -98,7 +102,7 @@ impl BitTorrentDHTState {
         }
     }
 
-    pub fn parse(&mut self, input: &[u8], _direction: crate::core::Direction) -> bool {
+    pub fn parse(&mut self, input: &[u8], _direction: Direction) -> bool {
         if !Self::is_dht(input) {
             return true;
         }
@@ -138,8 +142,8 @@ impl BitTorrentDHTState {
 
 // C exports.
 
-export_tx_data_get!(rs_bittorrent_dht_get_tx_data, BitTorrentDHTTransaction);
-export_state_data_get!(rs_bittorrent_dht_get_state_data, BitTorrentDHTState);
+export_tx_data_get!(bittorrent_dht_get_tx_data, BitTorrentDHTTransaction);
+export_state_data_get!(bittorrent_dht_get_state_data, BitTorrentDHTState);
 
 #[no_mangle]
 pub extern "C" fn rs_bittorrent_dht_state_new(
@@ -170,7 +174,7 @@ pub unsafe extern "C" fn rs_bittorrent_dht_parse_ts(
 ) -> AppLayerResult {
     return rs_bittorrent_dht_parse(
         _flow, state, _pstate, stream_slice,
-        _data, crate::core::Direction::ToServer);
+        _data, Direction::ToServer);
 }
 
 #[no_mangle]
@@ -180,14 +184,14 @@ pub unsafe extern "C" fn rs_bittorrent_dht_parse_tc(
 ) -> AppLayerResult {
     return rs_bittorrent_dht_parse(
         _flow, state, _pstate, stream_slice,
-        _data, crate::core::Direction::ToClient);
+        _data, Direction::ToClient);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn rs_bittorrent_dht_parse(
     _flow: *const Flow, state: *mut std::os::raw::c_void, _pstate: *mut std::os::raw::c_void,
     stream_slice: StreamSlice, _data: *const std::os::raw::c_void,
-    direction: crate::core::Direction,
+    direction: Direction,
 ) -> AppLayerResult {
     let state = cast_pointer!(state, BitTorrentDHTState);
     let buf = stream_slice.as_slice();
@@ -278,11 +282,10 @@ pub unsafe extern "C" fn rs_bittorrent_dht_udp_register_parser() {
         localstorage_free: None,
         get_tx_files: None,
         get_tx_iterator: Some(rs_bittorrent_dht_state_get_tx_iterator),
-        get_tx_data: rs_bittorrent_dht_get_tx_data,
-        get_state_data: rs_bittorrent_dht_get_state_data,
+        get_tx_data: bittorrent_dht_get_tx_data,
+        get_state_data: bittorrent_dht_get_state_data,
         apply_tx_config: None,
         flags: 0,
-        truncate: None,
         get_frame_id_by_name: None,
         get_frame_name_by_id: None,
     };
@@ -302,7 +305,7 @@ pub unsafe extern "C" fn rs_bittorrent_dht_udp_register_parser() {
             BITTORRENT_DHT_PAYLOAD_PREFIX.as_ptr() as *const c_char,
             BITTORRENT_DHT_PAYLOAD_PREFIX.len() as u16 - 1,
             0,
-            crate::core::Direction::ToServer.into(),
+            Direction::ToServer.into(),
         ) < 0
         {
             SCLogDebug!("Failed to register protocol detection pattern for direction TOSERVER");
@@ -313,11 +316,12 @@ pub unsafe extern "C" fn rs_bittorrent_dht_udp_register_parser() {
             BITTORRENT_DHT_PAYLOAD_PREFIX.as_ptr() as *const c_char,
             BITTORRENT_DHT_PAYLOAD_PREFIX.len() as u16 - 1,
             0,
-            crate::core::Direction::ToClient.into(),
+            Direction::ToClient.into(),
         ) < 0
         {
             SCLogDebug!("Failed to register protocol detection pattern for direction TOCLIENT");
         }
+        AppLayerParserRegisterLogger(IPPROTO_UDP, ALPROTO_BITTORRENT_DHT);
 
         SCLogDebug!("Parser registered for bittorrent-dht.");
     } else {

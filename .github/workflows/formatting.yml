@@ -12,6 +12,10 @@ on:
     paths-ignore:
       - "doc/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions: read-all
 
 env:
@@ -29,7 +33,7 @@ jobs:
 
       # Cache Rust stuff.
       - name: Cache cargo registry
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo/registry
           key: cargo-registry
@@ -85,7 +89,7 @@ jobs:
       # My patience simply ran too short to keep on looking. See follow-on
       # action to manually fix this up.
       - name: Checkout - might be merge commit!
-        uses: actions/checkout@v3.5.3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
         # Use last commit of branch, not potential merge commit!
@@ -126,7 +130,7 @@ jobs:
         shell: bash {0}
       - run: git clone https://github.com/OISF/libhtp -b 0.5.x
       - run: ./autogen.sh
-      - run: ./configure --enable-unittests
+      - run: ./configure --enable-warnings --enable-unittests
       - name: Check formatting
         run: |
           ./scripts/clang-format.sh check-branch --diffstat --show-commits  >> check_formatting_log.txt 2>&1

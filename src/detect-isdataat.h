@@ -21,8 +21,8 @@
  * \author Pablo Rincon <pablo.rincon.crespo@gmail.com>
  */
 
-#ifndef __DETECT_ISDATAAT_H__
-#define __DETECT_ISDATAAT_H__
+#ifndef SURICATA_DETECT_ISDATAAT_H
+#define SURICATA_DETECT_ISDATAAT_H
 
 #define ISDATAAT_RELATIVE   0x01
 #define ISDATAAT_RAWBYTES   0x02
@@ -34,8 +34,14 @@ typedef struct DetectIsdataatData_ {
     uint8_t flags; /* isdataat options*/
 } DetectIsdataatData;
 
+typedef struct DetectAbsentData_ {
+    /** absent or try to match with other keywords (false means only absent) */
+    bool or_else;
+} DetectAbsentData;
+
 /* prototypes */
 void DetectIsdataatRegister (void);
 
-#endif /* __DETECT_ISDATAAT_H__ */
+bool DetectAbsentValidateContentCallback(Signature *s, const SignatureInitDataBuffer *);
 
+#endif /* SURICATA_DETECT_ISDATAAT_H */

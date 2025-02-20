@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2022 Open Information Security Foundation
+/* Copyright (C) 2007-2025 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -26,6 +26,7 @@
 
 #include "suricata-common.h"
 #include "decode.h"
+#include "action-globals.h"
 #include "detect.h"
 #include "threads.h"
 #include "flow.h"
@@ -287,7 +288,7 @@ int DetectFlowbitSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawst
     if (strcmp(fb_cmd_str,"noalert") == 0) {
         if (strlen(fb_name) != 0)
             goto error;
-        s->flags |= SIG_FLAG_NOALERT;
+        s->action &= ~ACTION_ALERT;
         return 0;
     } else if (strcmp(fb_cmd_str,"isset") == 0) {
         fb_cmd = DETECT_FLOWBITS_CMD_ISSET;
@@ -623,12 +624,76 @@ int DetectFlowbitsAnalyze(DetectEngineCtx *de_ctx)
             SCLogDebug("SET flowbit %s/%u: SID %u", varname, i,
                     de_ctx->sig_array[array[i].set_sids[x]]->id);
         }
-        for (uint32_t x = 0; x < array[i].isset_sids_idx; x++) {
-            Signature *s = de_ctx->sig_array[array[i].isset_sids[x]];
-            SCLogDebug("GET flowbit %s/%u: SID %u", varname, i, s->id);
+        if (to_state) {
+            for (uint32_t x = 0; x < array[i].isset_sids_idx; x++) {
+                Signature *s = de_ctx->sig_array[array[i].isset_sids[x]];
+                SCLogDebug("GET flowbit %s/%u: SID %u", varname, i, s->id);
 
-            if (to_state) {
                 s->init_data->init_flags |= SIG_FLAG_INIT_STATE_MATCH;
+                s->init_data->is_rule_state_dependant = true;
+
+                uint32_t sids_array_size = array[i].set_sids_idx;
+
+                // save information about flowbits that affect this rule's state
+                if (s->init_data->rule_state_dependant_sids_array == NULL) {
+                    s->init_data->rule_state_dependant_sids_array =
+                            SCCalloc(sids_array_size, sizeof(uint32_t));
+                    if (s->init_data->rule_state_dependant_sids_array == NULL) {
+                        SCLogError("Failed to allocate memory for rule_state_dependant_ids");
+                        goto end;
+                    }
+                    s->init_data->rule_state_flowbits_ids_size = 1;
+                    s->init_data->rule_state_flowbits_ids_array =
+                            SCCalloc(s->init_data->rule_state_flowbits_ids_size, sizeof(uint32_t));
+                    if (s->init_data->rule_state_flowbits_ids_array == NULL) {
+                        SCLogError("Failed to allocate memory for rule_state_variable_idx");
+                        goto end;
+                    }
+                    s->init_data->rule_state_dependant_sids_size = sids_array_size;
+                    SCLogDebug("alloc'ed array for rule dependency and fbs idx array, sid %u, "
+                               "sizes are %u and %u",
+                            s->id, s->init_data->rule_state_dependant_sids_size,
+                            s->init_data->rule_state_flowbits_ids_size);
+                } else {
+                    uint32_t new_array_size =
+                            s->init_data->rule_state_dependant_sids_size + sids_array_size;
+                    void *tmp_ptr = SCRealloc(s->init_data->rule_state_dependant_sids_array,
+                            new_array_size * sizeof(uint32_t));
+                    if (tmp_ptr == NULL) {
+                        SCLogError("Failed to allocate memory for rule_state_variable_idx");
+                        goto end;
+                    }
+                    s->init_data->rule_state_dependant_sids_array = tmp_ptr;
+                    s->init_data->rule_state_dependant_sids_size = new_array_size;
+                    SCLogDebug("realloc'ed array for rule dependency, sid %u, new size is %u",
+                            s->id, s->init_data->rule_state_dependant_sids_size);
+                    uint32_t new_fb_array_size = s->init_data->rule_state_flowbits_ids_size + 1;
+                    void *tmp_fb_ptr = SCRealloc(s->init_data->rule_state_flowbits_ids_array,
+                            new_fb_array_size * sizeof(uint32_t));
+                    s->init_data->rule_state_flowbits_ids_array = tmp_fb_ptr;
+                    if (s->init_data->rule_state_flowbits_ids_array == NULL) {
+                        SCLogError("Failed to reallocate memory for rule_state_variable_idx");
+                        goto end;
+                    }
+                    SCLogDebug(
+                            "realloc'ed array for flowbits ids, new size is %u", new_fb_array_size);
+                    s->init_data->rule_state_dependant_sids_size = new_array_size;
+                    s->init_data->rule_state_flowbits_ids_size = new_fb_array_size;
+                }
+                for (uint32_t idx = 0; idx < s->init_data->rule_state_dependant_sids_size; idx++) {
+                    if (idx < array[i].set_sids_idx) {
+                        s->init_data->rule_state_dependant_sids_array
+                                [s->init_data->rule_state_dependant_sids_idx] =
+                                de_ctx->sig_array[array[i].set_sids[idx]]->id;
+                        s->init_data->rule_state_dependant_sids_idx++;
+                    }
+                }
+                s->init_data
+                        ->rule_state_flowbits_ids_array[s->init_data->rule_state_flowbits_ids_size -
+                                                        1] = i;
+                s->init_data->rule_state_flowbits_ids_size += 1;
+                // flowbit info saving for rule made stateful rule work finished
+
                 SCLogDebug("made SID %u stateful because it depends on "
                         "stateful rules that set flowbit %s", s->id, varname);
             }
@@ -927,7 +992,7 @@ static int FlowBitsTestSig05(void)
 
     s = de_ctx->sig_list = SigInit(de_ctx,"alert ip any any -> any any (msg:\"Noalert\"; flowbits:noalert; content:\"GET \"; sid:1;)");
     FAIL_IF_NULL(s);
-    FAIL_IF((s->flags & SIG_FLAG_NOALERT) != SIG_FLAG_NOALERT);
+    FAIL_IF((s->action & ACTION_ALERT) != 0);
 
     SigGroupBuild(de_ctx);
     DetectEngineCtxFree(de_ctx);
@@ -973,7 +1038,7 @@ static int FlowBitsTestSig06(void)
     p->payload_len = buflen;
     p->proto = IPPROTO_TCP;
     p->flags |= PKT_HAS_FLOW;
-    p->flowflags |= FLOW_PKT_TOSERVER;
+    p->flowflags |= (FLOW_PKT_TOSERVER | FLOW_PKT_TOSERVER_FIRST);
 
     de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);

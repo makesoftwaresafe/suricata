@@ -28,12 +28,15 @@ dns.opcode
 
 This keyword matches on the **opcode** found in the DNS header flags.
 
+dns.opcode uses an :ref:`unsigned 8-bit integer <rules-integer-keywords>`.
+
 Syntax
 ~~~~~~
 
 ::
 
    dns.opcode:[!]<number>
+   dns.opcode:[!]<number1>-<number2>
 
 Examples
 ~~~~~~~~
@@ -45,6 +48,72 @@ Match on DNS requests and responses with **opcode** 4::
 Match on DNS requests where the **opcode** is NOT 0::
 
   dns.opcode:!0;
+
+Match on DNS requests where the **opcode** is between 7 and 15, exclusively:
+
+  dns.opcode:7-15;
+
+Match on DNS requests where the **opcode** is not between 7 and 15:
+
+  dns.opcode:!7-15;
+
+dns.rcode
+---------
+
+This keyword matches on the **rcode** field found in the DNS header flags.
+
+dns.rcode uses an :ref:`unsigned 8-bit integer <rules-integer-keywords>`.
+
+Currently, Suricata only supports rcode values in the range [0-15], while
+the current DNS version supports rcode values from [0-23] as specified in
+`RFC 6895 <https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-6>`_.
+
+We plan to extend the rcode values supported by Suricata according to RFC 6895
+as tracked by the ticket: https://redmine.openinfosecfoundation.org/issues/6650
+
+Syntax
+~~~~~~
+
+::
+
+   dns.rcode:[!]<number>
+   dns.rcode:[!]<number1>-<number2>
+
+Examples
+~~~~~~~~
+
+Match on DNS requests and responses with **rcode** 4::
+
+  dns.rcode:4;
+
+Match on DNS requests and responses where the **rcode** is NOT 0::
+
+  dns.rcode:!0;
+
+dns.rrtype
+----------
+
+This keyword matches on the **rrtype** (integer) found in the DNS message.
+
+dns.rrtype uses an :ref:`unsigned 16-bit integer <rules-integer-keywords>`.
+
+Syntax
+~~~~~~
+
+::
+
+   dns.rrtype:[!]<number>
+
+Examples
+~~~~~~~~
+
+Match on DNS requests and responses with **rrtype** 4::
+
+  dns.rrtype:4;
+
+Match on DNS requests and responses where the **rrtype** is NOT 0::
+
+  dns.rrtype:!0;
 
 dns.query
 ---------

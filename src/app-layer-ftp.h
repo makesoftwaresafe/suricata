@@ -22,8 +22,8 @@
  * \author Jeff Lucovsky <jeff@lucovsky.org>
  */
 
-#ifndef __APP_LAYER_FTP_H__
-#define __APP_LAYER_FTP_H__
+#ifndef SURICATA_APP_LAYER_FTP_H
+#define SURICATA_APP_LAYER_FTP_H
 
 #include "rust.h"
 
@@ -184,13 +184,12 @@ typedef struct FtpDataState_ {
 
 void RegisterFTPParsers(void);
 void FTPParserRegisterTests(void);
-void FTPAtExitPrintStats(void);
 void FTPParserCleanup(void);
+int FTPSetMemcap(uint64_t size);
 uint64_t FTPMemuseGlobalCounter(void);
 uint64_t FTPMemcapGlobalCounter(void);
 
 uint16_t JsonGetNextLineFromBuffer(const char *buffer, const uint16_t len);
 bool EveFTPDataAddMetadata(void *vtx, JsonBuilder *jb);
 
-#endif /* __APP_LAYER_FTP_H__ */
-
+#endif /* SURICATA_APP_LAYER_FTP_H */

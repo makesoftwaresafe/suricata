@@ -29,7 +29,6 @@
  * AF_XDP socket acquisition support
  *
  */
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #define SC_PCAP_DONT_INCLUDE_PCAP_H  1
 #include "suricata-common.h"
 #include "suricata.h"
@@ -283,14 +282,9 @@ TmEcode AFXDPQueueProtectionInit(void)
     SCReturnInt(TM_ECODE_OK);
 }
 
-void AFXDPMutexClean(void)
-{
-    SCMutexDestroy(&xsk_protect.queue_protect);
-}
-
 static TmEcode AFXDPAssignQueueID(AFXDPThreadVars *ptv)
 {
-    if (ptv->xsk.queue.assigned == false) {
+    if (!ptv->xsk.queue.assigned) {
         ptv->xsk.queue.queue_num = SC_ATOMIC_GET(xsk_protect.queue_num);
         SC_ATOMIC_ADD(xsk_protect.queue_num, 1);
 
@@ -580,6 +574,7 @@ static inline ssize_t WakeupSocket(void *data)
 
     /* Assuming kernel >= 5.11 in use if xdp_busy_poll is enabled */
     if (ptv->xsk.enable_busy_poll || xsk_ring_prod__needs_wakeup(&ptv->umem.fq)) {
+        // cppcheck-suppress nullPointer
         res = recvfrom(xsk_socket__fd(ptv->xsk.xsk), NULL, 0, MSG_DONTWAIT, NULL, NULL);
     }
 

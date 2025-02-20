@@ -21,8 +21,8 @@
  * \author Anoop Saldanha <anoopsaldanha@gmail.com>
  */
 
-#ifndef __UTIL_DEBUG_H__
-#define __UTIL_DEBUG_H__
+#ifndef SURICATA_UTIL_DEBUG_H
+#define SURICATA_UTIL_DEBUG_H
 
 #include "suricata-common.h"
 
@@ -80,8 +80,8 @@ typedef enum {
 #define SC_LOG_DEF_LOG_FORMAT_REL_CONFIG "[%i] %d: %S: %M"
 #define SC_LOG_DEF_LOG_FORMAT_DEBUG      "%d: %S: %M [%n:%f:%l]"
 
-/* The maximum length of the log message */
-#define SC_LOG_MAX_LOG_MSG_LEN 2048
+/* The maximum length of the log message: we add max rule size and other info */
+#define SC_LOG_MAX_LOG_MSG_LEN 8192 + PATH_MAX + 512
 
 /* The maximum length of the log format */
 #define SC_LOG_MAX_LOG_FORMAT_LEN 128
@@ -530,6 +530,8 @@ SCLogInitData *SCLogAllocLogInitData(void);
 
 void SCLogAppendOPIfaceCtx(SCLogOPIfaceCtx *, SCLogInitData *);
 
+void SCFatalErrorOnInitStatic(const char *);
+
 void SCLogInitLogModule(SCLogInitData *);
 
 void SCLogDeInitLogModule(void);
@@ -547,4 +549,4 @@ void SCLogLoadConfig(int daemon, int verbose, uint32_t userid, uint32_t groupid)
 
 SCLogLevel SCLogGetLogLevel(void);
 
-#endif /* __UTIL_DEBUG_H__ */
+#endif /* SURICATA_UTIL_DEBUG_H */

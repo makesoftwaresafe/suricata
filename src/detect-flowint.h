@@ -21,8 +21,8 @@
  * \author Pablo Rincon <pablo.rincon.crespo@gmail.com>
  */
 
-#ifndef __DETECT_FLOWINT_H__
-#define __DETECT_FLOWINT_H__
+#ifndef SURICATA_DETECT_FLOWINT_H
+#define SURICATA_DETECT_FLOWINT_H
 
 /** Flowint operations allowed */
 enum {
@@ -40,7 +40,7 @@ enum {
     FLOWINT_MODIFIER_GT,
     /** Checking if a var is set (keyword isset/notset)*/
     FLOWINT_MODIFIER_ISSET,
-    FLOWINT_MODIFIER_NOTSET,
+    FLOWINT_MODIFIER_ISNOTSET,
 
     FLOWINT_MODIFIER_UNKNOWN
 };
@@ -81,5 +81,4 @@ typedef struct DetectFlowintData_ {
 /* prototypes */
 void DetectFlowintRegister (void);
 
-#endif /* __DETECT_FLOWINT_H__ */
-
+#endif /* SURICATA_DETECT_FLOWINT_H */

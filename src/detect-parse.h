@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_PARSE_H__
-#define __DETECT_PARSE_H__
+#ifndef SURICATA_DETECT_PARSE_H
+#define SURICATA_DETECT_PARSE_H
 
 #include "detect.h"
 #include "detect-engine-mpm.h"
@@ -42,7 +42,7 @@ typedef struct DetectFileHandlerTableElmt_ {
 void DetectFileRegisterFileProtocols(DetectFileHandlerTableElmt *entry);
 
 /* File registration table */
-extern DetectFileHandlerTableElmt filehandler_table[DETECT_TBLSIZE];
+extern DetectFileHandlerTableElmt filehandler_table[DETECT_TBLSIZE_STATIC];
 
 /** Flags to indicate if the Signature parsing must be done
 *   switching the source and dest (for ip addresses and ports)
@@ -120,4 +120,4 @@ int SC_Pcre2SubstringCopy(
 int SC_Pcre2SubstringGet(pcre2_match_data *match_data, uint32_t number, PCRE2_UCHAR **bufferptr,
         PCRE2_SIZE *bufflen);
 
-#endif /* __DETECT_PARSE_H__ */
+#endif /* SURICATA_DETECT_PARSE_H */

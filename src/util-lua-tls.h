@@ -21,13 +21,9 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_LUA_TLS_H__
-#define __UTIL_LUA_TLS_H__
-
-#ifdef HAVE_LUA
+#ifndef SURICATA_UTIL_LUA_TLS_H
+#define SURICATA_UTIL_LUA_TLS_H
 
 int LuaRegisterTlsFunctions(lua_State *luastate);
 
-#endif /* HAVE_LUA */
-
-#endif /* __UTIL_LUA_TLS_H__ */
+#endif /* SURICATA_UTIL_LUA_TLS_H */

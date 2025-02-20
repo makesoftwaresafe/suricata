@@ -79,16 +79,17 @@ static InspectionBuffer *GetData2(DetectEngineThreadCtx *det_ctx,
 void DetectHttpMethodRegister(void)
 {
     /* http_method content modifier */
-    sigmatch_table[DETECT_AL_HTTP_METHOD].name = "http_method";
-    sigmatch_table[DETECT_AL_HTTP_METHOD].desc = "content modifier to match only on the HTTP method-buffer";
-    sigmatch_table[DETECT_AL_HTTP_METHOD].url = "/rules/http-keywords.html#http-method";
-    sigmatch_table[DETECT_AL_HTTP_METHOD].Match = NULL;
-    sigmatch_table[DETECT_AL_HTTP_METHOD].Setup = DetectHttpMethodSetup;
+    sigmatch_table[DETECT_HTTP_METHOD_CM].name = "http_method";
+    sigmatch_table[DETECT_HTTP_METHOD_CM].desc =
+            "content modifier to match only on the HTTP method-buffer";
+    sigmatch_table[DETECT_HTTP_METHOD_CM].url = "/rules/http-keywords.html#http-method";
+    sigmatch_table[DETECT_HTTP_METHOD_CM].Match = NULL;
+    sigmatch_table[DETECT_HTTP_METHOD_CM].Setup = DetectHttpMethodSetup;
 #ifdef UNITTESTS
-    sigmatch_table[DETECT_AL_HTTP_METHOD].RegisterTests = DetectHttpMethodRegisterTests;
+    sigmatch_table[DETECT_HTTP_METHOD_CM].RegisterTests = DetectHttpMethodRegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_HTTP_METHOD].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_CONTENT_MODIFIER;
-    sigmatch_table[DETECT_AL_HTTP_METHOD].alternative = DETECT_HTTP_METHOD;
+    sigmatch_table[DETECT_HTTP_METHOD_CM].flags |= SIGMATCH_NOOPT | SIGMATCH_INFO_CONTENT_MODIFIER;
+    sigmatch_table[DETECT_HTTP_METHOD_CM].alternative = DETECT_HTTP_METHOD;
 
     /* http.method sticky buffer */
     sigmatch_table[DETECT_HTTP_METHOD].name = "http.method";
@@ -98,10 +99,10 @@ void DetectHttpMethodRegister(void)
     sigmatch_table[DETECT_HTTP_METHOD].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
     DetectAppLayerInspectEngineRegister("http_method", ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
-            HTP_REQUEST_LINE, DetectEngineInspectBufferGeneric, GetData);
+            HTP_REQUEST_PROGRESS_LINE, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerMpmRegister("http_method", SIG_FLAG_TOSERVER, 4, PrefilterGenericMpmRegister,
-            GetData, ALPROTO_HTTP1, HTP_REQUEST_LINE);
+            GetData, ALPROTO_HTTP1, HTP_REQUEST_PROGRESS_LINE);
 
     DetectAppLayerInspectEngineRegister("http_method", ALPROTO_HTTP2, SIG_FLAG_TOSERVER,
             HTTP2StateDataClient, DetectEngineInspectBufferGeneric, GetData2);
@@ -134,7 +135,7 @@ void DetectHttpMethodRegister(void)
 static int DetectHttpMethodSetup(DetectEngineCtx *de_ctx, Signature *s, const char *str)
 {
     return DetectEngineContentModifierBufferSetup(
-            de_ctx, s, str, DETECT_AL_HTTP_METHOD, g_http_method_buffer_id, ALPROTO_HTTP1);
+            de_ctx, s, str, DETECT_HTTP_METHOD_CM, g_http_method_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -203,11 +204,11 @@ static InspectionBuffer *GetData(DetectEngineThreadCtx *det_ctx,
     if (buffer->inspect == NULL) {
         htp_tx_t *tx = (htp_tx_t *)txv;
 
-        if (tx->request_method == NULL)
+        if (htp_tx_request_method(tx) == NULL)
             return NULL;
 
-        const uint32_t data_len = bstr_len(tx->request_method);
-        const uint8_t *data = bstr_ptr(tx->request_method);
+        const uint32_t data_len = bstr_len(htp_tx_request_method(tx));
+        const uint8_t *data = bstr_ptr(htp_tx_request_method(tx));
 
         InspectionBufferSetup(det_ctx, list_id, buffer, data, data_len);
         InspectionBufferApplyTransforms(buffer, transforms);

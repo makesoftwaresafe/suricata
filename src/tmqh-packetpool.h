@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __TMQH_PACKETPOOL_H__
-#define __TMQH_PACKETPOOL_H__
+#ifndef SURICATA_TMQH_PACKETPOOL_H
+#define SURICATA_TMQH_PACKETPOOL_H
 
 #include "decode.h"
 #include "threads.h"
@@ -80,8 +80,7 @@ Packet *PacketPoolGetPacket(void);
 void PacketPoolWait(void);
 void PacketPoolReturnPacket(Packet *p);
 void PacketPoolInit(void);
-void PacketPoolInitEmpty(void);
 void PacketPoolDestroy(void);
 void PacketPoolPostRunmodes(void);
 
-#endif /* __TMQH_PACKETPOOL_H__ */
+#endif /* SURICATA_TMQH_PACKETPOOL_H */

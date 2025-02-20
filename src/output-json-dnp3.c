@@ -140,7 +140,7 @@ static void JsonDNP3LogObjects(JsonBuilder *js, DNP3ObjectList *objects)
     }
 }
 
-void JsonDNP3LogRequest(JsonBuilder *js, DNP3Transaction *dnp3tx)
+static void JsonDNP3LogRequest(JsonBuilder *js, DNP3Transaction *dnp3tx)
 {
     JB_SET_STRING(js, "type", "request");
 
@@ -171,7 +171,7 @@ void JsonDNP3LogRequest(JsonBuilder *js, DNP3Transaction *dnp3tx)
     jb_close(js);
 }
 
-void JsonDNP3LogResponse(JsonBuilder *js, DNP3Transaction *dnp3tx)
+static void JsonDNP3LogResponse(JsonBuilder *js, DNP3Transaction *dnp3tx)
 {
     if (dnp3tx->ah.function_code == DNP3_APP_FC_UNSOLICITED_RESP) {
         JB_SET_STRING(js, "type", "unsolicited_response");
@@ -246,7 +246,7 @@ static int JsonDNP3LoggerToServer(ThreadVars *tv, void *thread_data,
     jb_open_object(js, "dnp3");
     JsonDNP3LogRequest(js, tx);
     jb_close(js);
-    OutputJsonBuilderBuffer(js, thread->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, js, thread->ctx);
     jb_free(js);
 
     SCReturnInt(TM_ECODE_OK);
@@ -267,7 +267,7 @@ static int JsonDNP3LoggerToClient(ThreadVars *tv, void *thread_data,
     jb_open_object(js, "dnp3");
     JsonDNP3LogResponse(js, tx);
     jb_close(js);
-    OutputJsonBuilderBuffer(js, thread->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, js, thread->ctx);
     jb_free(js);
 
     SCReturnInt(TM_ECODE_OK);
@@ -293,8 +293,6 @@ static void OutputDNP3LogDeInitCtxSub(OutputCtx *output_ctx)
     SCFree(dnp3log_ctx);
     SCFree(output_ctx);
 }
-
-#define DEFAULT_LOG_FILENAME "dnp3.json"
 
 static OutputInitResult OutputDNP3LogInitSub(ConfNode *conf, OutputCtx *parent_ctx)
 {
@@ -367,5 +365,5 @@ void JsonDNP3LogRegister(void)
 {
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonDNP3Log", "eve-log.dnp3",
             OutputDNP3LogInitSub, ALPROTO_DNP3, JsonDNP3Logger, JsonDNP3LogThreadInit,
-            JsonDNP3LogThreadDeinit, NULL);
+            JsonDNP3LogThreadDeinit);
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2022 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -26,12 +26,6 @@
 
 #include "suricata-common.h"
 #include "decode.h"
-#include "threads.h"
-
-#include "stream-tcp-private.h"
-#include "stream-tcp-reassemble.h"
-#include "stream-tcp.h"
-#include "stream.h"
 
 #include "app-layer.h"
 #include "app-layer-detect-proto.h"
@@ -40,19 +34,13 @@
 #include "app-layer-frames.h"
 #include "app-layer-ssl.h"
 
-#include "decode-events.h"
 #include "conf.h"
 
-#include "util-spm.h"
-#include "util-unittest.h"
+#include "feature.h"
+
 #include "util-debug.h"
-#include "util-print.h"
-#include "util-pool.h"
-#include "util-byte.h"
 #include "util-ja3.h"
 #include "util-enum.h"
-#include "flow-util.h"
-#include "flow-private.h"
 #include "util-validate.h"
 
 SCEnumCharMap tls_frame_table[] = {
@@ -143,8 +131,9 @@ enum {
     ERR_EXTRACT_VALIDITY,
 };
 
-/* JA3 fingerprints are disabled by default */
+/* JA3 and JA4 fingerprints are disabled by default */
 #define SSL_CONFIG_DEFAULT_JA3 0
+#define SSL_CONFIG_DEFAULT_JA4 0
 
 enum SslConfigEncryptHandling {
     SSL_CNF_ENC_HANDLE_DEFAULT = 0, /**< disable raw content, continue tracking */
@@ -154,10 +143,12 @@ enum SslConfigEncryptHandling {
 
 typedef struct SslConfig_ {
     enum SslConfigEncryptHandling encrypt_mode;
-    /** dynamic setting for ja3: can be enabled on demand if not explicitly
-     *  disabled. */
+    /** dynamic setting for ja3 and ja4: can be enabled on demand if not
+     *  explicitly disabled. */
     SC_ATOMIC_DECLARE(int, enable_ja3);
     bool disable_ja3; /**< ja3 explicitly disabled. Don't enable on demand. */
+    SC_ATOMIC_DECLARE(int, enable_ja4);
+    bool disable_ja4; /**< ja4 explicitly disabled. Don't enable on demand. */
 } SslConfig;
 
 SslConfig ssl_config;
@@ -195,8 +186,7 @@ SslConfig ssl_config;
 #define SSLV2_MT_REQUEST_CERTIFICATE    7
 #define SSLV2_MT_CLIENT_CERTIFICATE     8
 
-#define SSLV3_RECORD_HDR_LEN            5
-#define SSLV3_MESSAGE_HDR_LEN           4
+#define SSLV3_RECORD_HDR_LEN 5
 /** max length according to RFC 5246 6.2.2 is 2^14 + 1024 */
 #define SSLV3_RECORD_MAX_LEN ((1 << 14) + 1024)
 
@@ -225,12 +215,12 @@ struct SSLDecoderResult {
 #define SSL_DECODER_OK(c)                                                                          \
     (struct SSLDecoderResult)                                                                      \
     {                                                                                              \
-        (c), 0                                                                                     \
+        (uint32_t)(c), 0                                                                           \
     }
 #define SSL_DECODER_INCOMPLETE(c, n)                                                               \
     (struct SSLDecoderResult)                                                                      \
     {                                                                                              \
-        (c), (n)                                                                                   \
+        (uint32_t)(c), (n)                                                                         \
     }
 
 static inline int SafeMemcpy(void *dst, size_t dst_offset, size_t dst_size,
@@ -286,6 +276,8 @@ static inline int SafeMemcpy(void *dst, size_t dst_offset, size_t dst_size,
             (ssl_state)->events++;                                                                 \
         }                                                                                          \
     } while (0)
+
+static void SSLStateCertSANFree(SSLStateConnp *connp);
 
 static void *SSLGetTx(void *state, uint64_t tx_id)
 {
@@ -541,6 +533,15 @@ static int TlsDecodeHSCertificate(SSLState *ssl_state, SSLStateConnp *connp,
         }
         connp->cert0_issuerdn = str;
 
+        connp->cert0_sans_len = rs_x509_get_subjectaltname_len(x509);
+        char **sans = SCCalloc(connp->cert0_sans_len, sizeof(char *));
+        if (sans == NULL) {
+            goto error;
+        }
+        for (uint16_t i = 0; i < connp->cert0_sans_len; i++) {
+            sans[i] = rs_x509_get_subjectaltname_at(x509, i);
+        }
+        connp->cert0_sans = sans;
         str = rs_x509_get_serial(x509);
         if (str == NULL) {
             err_code = ERR_INVALID_SERIAL;
@@ -572,13 +573,15 @@ static int TlsDecodeHSCertificate(SSLState *ssl_state, SSLStateConnp *connp,
 
 next:
     input += cert_len;
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 error:
     if (err_code != 0)
         TlsDecodeHSCertificateErrSetEvent(ssl_state, err_code);
     if (x509 != NULL)
         rs_x509_free(x509);
+
+    SSLStateCertSANFree(connp);
     return -1;
 
 invalid_cert:
@@ -691,6 +694,11 @@ static inline int TLSDecodeHSHelloVersion(SSLState *ssl_state,
     uint16_t version = (uint16_t)(*input << 8) | *(input + 1);
     ssl_state->curr_connp->version = version;
 
+    if (ssl_state->curr_connp->ja4 != NULL &&
+            ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+        SCJA4SetTLSVersion(ssl_state->curr_connp->ja4, version);
+    }
+
     /* TLSv1.3 draft1 to draft21 use the version field as earlier TLS
        versions, instead of using the supported versions extension. */
     if ((ssl_state->current_flags & SSL_AL_FLAG_STATE_SERVER_HELLO) &&
@@ -725,7 +733,7 @@ static inline int TLSDecodeHSHelloVersion(SSLState *ssl_state,
 
     input += SSLV3_CLIENT_HELLO_VERSION_LEN;
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 }
 
 static inline int TLSDecodeHSHelloRandom(SSLState *ssl_state,
@@ -752,7 +760,7 @@ static inline int TLSDecodeHSHelloRandom(SSLState *ssl_state,
     /* Skip random */
     input += SSLV3_CLIENT_HELLO_RANDOM_LEN;
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 }
 
 static inline int TLSDecodeHSHelloSessionID(SSLState *ssl_state,
@@ -797,7 +805,7 @@ static inline int TLSDecodeHSHelloSessionID(SSLState *ssl_state,
 
     input += session_id_length;
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -834,17 +842,26 @@ static inline int TLSDecodeHSHelloCipherSuites(SSLState *ssl_state,
         goto invalid_length;
     }
 
-    if (SC_ATOMIC_GET(ssl_config.enable_ja3)) {
-        JA3Buffer *ja3_cipher_suites = Ja3BufferInit();
-        if (ja3_cipher_suites == NULL)
-            return -1;
+    const bool enable_ja3 =
+            SC_ATOMIC_GET(ssl_config.enable_ja3) && ssl_state->curr_connp->ja3_hash == NULL;
+
+    if (enable_ja3 || SC_ATOMIC_GET(ssl_config.enable_ja4)) {
+        JA3Buffer *ja3_cipher_suites = NULL;
+
+        if (enable_ja3) {
+            ja3_cipher_suites = Ja3BufferInit();
+            if (ja3_cipher_suites == NULL)
+                return -1;
+        }
 
         uint16_t processed_len = 0;
         /* coverity[tainted_data] */
         while (processed_len < cipher_suites_length)
         {
             if (!(HAS_SPACE(2))) {
-                Ja3BufferFree(&ja3_cipher_suites);
+                if (enable_ja3) {
+                    Ja3BufferFree(&ja3_cipher_suites);
+                }
                 goto invalid_length;
             }
 
@@ -852,19 +869,25 @@ static inline int TLSDecodeHSHelloCipherSuites(SSLState *ssl_state,
             input += 2;
 
             if (TLSDecodeValueIsGREASE(cipher_suite) != 1) {
-                int rc = Ja3BufferAddValue(&ja3_cipher_suites, cipher_suite);
-                if (rc != 0) {
-                    return -1;
+                if (ssl_state->curr_connp->ja4 != NULL &&
+                        ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+                    SCJA4AddCipher(ssl_state->curr_connp->ja4, cipher_suite);
+                }
+                if (enable_ja3) {
+                    int rc = Ja3BufferAddValue(&ja3_cipher_suites, cipher_suite);
+                    if (rc != 0) {
+                        return -1;
+                    }
                 }
             }
-
             processed_len += 2;
         }
 
-        int rc = Ja3BufferAppendBuffer(&ssl_state->curr_connp->ja3_str,
-                                   &ja3_cipher_suites);
-        if (rc == -1) {
-            return -1;
+        if (enable_ja3) {
+            int rc = Ja3BufferAppendBuffer(&ssl_state->curr_connp->ja3_str, &ja3_cipher_suites);
+            if (rc == -1) {
+                return -1;
+            }
         }
 
     } else {
@@ -872,7 +895,7 @@ static inline int TLSDecodeHSHelloCipherSuites(SSLState *ssl_state,
         input += cipher_suites_length;
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -903,7 +926,7 @@ static inline int TLSDecodeHSHelloCompressionMethods(SSLState *ssl_state,
         input += compression_methods_length;
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid_length");
@@ -965,7 +988,7 @@ static inline int TLSDecodeHSHelloExtensionSni(SSLState *ssl_state,
         SSLSetEvent(ssl_state,
                 TLS_DECODER_EVENT_MULTIPLE_SNI_EXTENSIONS);
         input += sni_len;
-        return (input - initial_input);
+        return (int)(input - initial_input);
     }
 
     const size_t sni_strlen = sni_len + 1;
@@ -984,7 +1007,7 @@ static inline int TLSDecodeHSHelloExtensionSni(SSLState *ssl_state,
 
     input += sni_len;
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -1018,13 +1041,17 @@ static inline int TLSDecodeHSHelloExtensionSupportedVersions(SSLState *ssl_state
         if (!(HAS_SPACE(supported_ver_len)))
             goto invalid_length;
 
-        /* Use the first (and prefered) valid version as client version,
+        /* Use the first (and preferred) valid version as client version,
          * skip over GREASE and other possible noise. */
         uint16_t i = 0;
         while (i + 1 < (uint16_t)supported_ver_len) {
             uint16_t ver = (uint16_t)(input[i] << 8) | input[i + 1];
             if (TLSVersionValid(ver)) {
                 ssl_state->curr_connp->version = ver;
+                if (ssl_state->curr_connp->ja4 != NULL &&
+                        ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+                    SCJA4SetTLSVersion(ssl_state->curr_connp->ja4, ver);
+                }
                 break;
             }
             i += 2;
@@ -1050,7 +1077,7 @@ static inline int TLSDecodeHSHelloExtensionSupportedVersions(SSLState *ssl_state
         input += 2;
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -1080,8 +1107,7 @@ static inline int TLSDecodeHSHelloExtensionEllipticCurves(SSLState *ssl_state,
     if (!(HAS_SPACE(elliptic_curves_len)))
         goto invalid_length;
 
-    if ((ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) &&
-            SC_ATOMIC_GET(ssl_config.enable_ja3)) {
+    if ((ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) && ja3_elliptic_curves) {
         uint16_t ec_processed_len = 0;
         /* coverity[tainted_data] */
         while (ec_processed_len < elliptic_curves_len)
@@ -1107,7 +1133,7 @@ static inline int TLSDecodeHSHelloExtensionEllipticCurves(SSLState *ssl_state,
         input += elliptic_curves_len;
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -1137,8 +1163,7 @@ static inline int TLSDecodeHSHelloExtensionEllipticCurvePF(SSLState *ssl_state,
     if (!(HAS_SPACE(ec_pf_len)))
         goto invalid_length;
 
-    if ((ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) &&
-            SC_ATOMIC_GET(ssl_config.enable_ja3)) {
+    if ((ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) && ja3_elliptic_curves_pf) {
         uint8_t ec_pf_processed_len = 0;
         /* coverity[tainted_data] */
         while (ec_pf_processed_len < ec_pf_len)
@@ -1161,12 +1186,129 @@ static inline int TLSDecodeHSHelloExtensionEllipticCurvePF(SSLState *ssl_state,
         input += ec_pf_len;
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
     SSLSetEvent(ssl_state,
                 TLS_DECODER_EVENT_HANDSHAKE_INVALID_LENGTH);
+
+    return -1;
+}
+
+static inline int TLSDecodeHSHelloExtensionSigAlgorithms(
+        SSLState *ssl_state, const uint8_t *const initial_input, const uint32_t input_len)
+{
+    const uint8_t *input = initial_input;
+
+    /* Empty extension */
+    if (input_len == 0)
+        return 0;
+
+    if (!(HAS_SPACE(2)))
+        goto invalid_length;
+
+    uint16_t sigalgo_len = (uint16_t)(*input << 8) | *(input + 1);
+    input += 2;
+
+    /* Signature algorithms length should always be divisible by 2 */
+    if ((sigalgo_len % 2) != 0) {
+        goto invalid_length;
+    }
+
+    if (!(HAS_SPACE(sigalgo_len)))
+        goto invalid_length;
+
+    if (ssl_state->curr_connp->ja4 != NULL &&
+            ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+        uint16_t sigalgo_processed_len = 0;
+        while (sigalgo_processed_len < sigalgo_len) {
+            uint16_t sigalgo = (uint16_t)(*input << 8) | *(input + 1);
+            input += 2;
+            sigalgo_processed_len += 2;
+
+            SCJA4AddSigAlgo(ssl_state->curr_connp->ja4, sigalgo);
+        }
+    } else {
+        /* Skip signature algorithms */
+        input += sigalgo_len;
+    }
+
+    return (int)(input - initial_input);
+
+invalid_length:
+    SCLogDebug("Signature algorithm list invalid length");
+    SSLSetEvent(ssl_state, TLS_DECODER_EVENT_HANDSHAKE_INVALID_LENGTH);
+
+    return -1;
+}
+
+static void StoreALPN(SSLStateConnp *connp, const uint8_t *alpn, const uint32_t size)
+{
+    if (size > 0) {
+        SSLAlpns *a = SCCalloc(1, sizeof(*a) + size);
+        if (a != NULL) {
+            memcpy(a->alpn, alpn, size);
+            a->size = size;
+            TAILQ_INSERT_TAIL(&connp->alpns, a, next);
+        }
+    }
+}
+
+static inline int TLSDecodeHSHelloExtensionALPN(
+        SSLState *ssl_state, const uint8_t *const initial_input, const uint32_t input_len)
+{
+    const uint8_t *input = initial_input;
+
+    /* Empty extension */
+    if (input_len == 0)
+        return 0;
+
+    if (!(HAS_SPACE(2)))
+        goto invalid_length;
+
+    uint16_t alpn_len = (uint16_t)(*input << 8) | *(input + 1);
+    input += 2;
+
+    if (!(HAS_SPACE(alpn_len)))
+        goto invalid_length;
+
+    /* We use 32 bits here to avoid potentially overflowing a value that
+       needs to be compared to an unsigned 16-bit value. */
+    uint32_t alpn_processed_len = 0;
+    while (alpn_processed_len < alpn_len) {
+        uint8_t protolen = *input;
+        input += 1;
+        alpn_processed_len += 1;
+
+        if (!(HAS_SPACE(protolen)))
+            goto invalid_length;
+
+        /* Check if reading another protolen bytes would exceed the
+           overall ALPN length; if so, skip and continue */
+        if (alpn_processed_len + protolen > ((uint32_t)alpn_len)) {
+            input += alpn_len - alpn_processed_len;
+            break;
+        }
+
+        /* Only record the first value for JA4 */
+        if (ssl_state->curr_connp->ja4 != NULL &&
+                ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+            if (alpn_processed_len == 1) {
+                SCJA4SetALPN(ssl_state->curr_connp->ja4, (const char *)input, protolen);
+            }
+        }
+        StoreALPN(ssl_state->curr_connp, input, protolen);
+
+        alpn_processed_len += protolen;
+        input += protolen;
+    }
+
+    return (int)(input - initial_input);
+
+invalid_length:
+    SCLogDebug("ALPN list invalid length");
+    SSLSetEvent(ssl_state, TLS_DECODER_EVENT_HANDSHAKE_INVALID_LENGTH);
 
     return -1;
 }
@@ -1179,7 +1321,9 @@ static inline int TLSDecodeHSHelloExtensions(SSLState *ssl_state,
 
     int ret;
     int rc;
-    const bool ja3 = (SC_ATOMIC_GET(ssl_config.enable_ja3) == 1);
+    // if ja3_hash is already computed, do not use new hello to augment ja3_str
+    const bool ja3 =
+            (SC_ATOMIC_GET(ssl_config.enable_ja3) == 1) && ssl_state->curr_connp->ja3_hash == NULL;
 
     JA3Buffer *ja3_extensions = NULL;
     JA3Buffer *ja3_elliptic_curves = NULL;
@@ -1272,6 +1416,28 @@ static inline int TLSDecodeHSHelloExtensions(SSLState *ssl_state,
                 break;
             }
 
+            case SSL_EXTENSION_SIGNATURE_ALGORITHMS: {
+                /* coverity[tainted_data] */
+                ret = TLSDecodeHSHelloExtensionSigAlgorithms(ssl_state, input, ext_len);
+                if (ret < 0)
+                    goto end;
+
+                input += ret;
+
+                break;
+            }
+
+            case SSL_EXTENSION_ALPN: {
+                /* coverity[tainted_data] */
+                ret = TLSDecodeHSHelloExtensionALPN(ssl_state, input, ext_len);
+                if (ret < 0)
+                    goto end;
+
+                input += ext_len;
+
+                break;
+            }
+
             case SSL_EXTENSION_EARLY_DATA:
             {
                 if (ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
@@ -1325,6 +1491,13 @@ static inline int TLSDecodeHSHelloExtensions(SSLState *ssl_state,
             }
         }
 
+        if (ssl_state->curr_connp->ja4 != NULL &&
+                ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO) {
+            if (TLSDecodeValueIsGREASE(ext_type) != 1) {
+                SCJA4AddExtension(ssl_state->curr_connp->ja4, ext_type);
+            }
+        }
+
         processed_len += ext_len + 4;
     }
 
@@ -1348,7 +1521,7 @@ end:
         }
     }
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 
 invalid_length:
     SCLogDebug("TLS handshake invalid length");
@@ -1372,6 +1545,15 @@ static int TLSDecodeHandshakeHello(SSLState *ssl_state,
 {
     int ret;
     uint32_t parsed = 0;
+
+    /* Ensure that we have a JA4 state defined by now if we have JA4 enabled,
+       we are in a client hello and we don't have such a state yet (to avoid
+       leaking memory in case this function is entered more than once). */
+    if (SC_ATOMIC_GET(ssl_config.enable_ja4) &&
+            ssl_state->current_flags & SSL_AL_FLAG_STATE_CLIENT_HELLO &&
+            ssl_state->curr_connp->ja4 == NULL) {
+        ssl_state->curr_connp->ja4 = SCJA4New();
+    }
 
     ret = TLSDecodeHSHelloVersion(ssl_state, input, input_len);
     if (ret < 0)
@@ -1712,7 +1894,7 @@ static int SSLv3ParseHandshakeProtocol(SSLState *ssl_state, const uint8_t *input
                     ssl_state->curr_connp->hs_buffer_message_size);
             input += input_len;
             SSLParserHSReset(ssl_state->curr_connp);
-            return (input - initial_input);
+            return (int)(input - initial_input);
 
         } else {
             /* full record, parse it now */
@@ -1730,7 +1912,7 @@ static int SSLv3ParseHandshakeProtocol(SSLState *ssl_state, const uint8_t *input
         }
         SCLogDebug("input_len left %u", input_len);
     }
-    return (input - initial_input);
+    return (int)(input - initial_input);
 }
 
 /**
@@ -1935,7 +2117,7 @@ static int SSLv3ParseRecord(uint8_t direction, SSLState *ssl_state,
 
     ssl_state->curr_connp->bytes_processed += (input - initial_input);
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 }
 
 static int SSLv2ParseRecord(uint8_t direction, SSLState *ssl_state,
@@ -2019,7 +2201,7 @@ static int SSLv2ParseRecord(uint8_t direction, SSLState *ssl_state,
 
     ssl_state->curr_connp->bytes_processed += (input - initial_input);
 
-    return (input - initial_input);
+    return (int)(input - initial_input);
 }
 
 static struct SSLDecoderResult SSLv2Decode(uint8_t direction, SSLState *ssl_state,
@@ -2491,13 +2673,15 @@ static AppLayerResult SSLDecode(Flow *f, uint8_t direction, void *alstate,
         AppLayerParserState *pstate, StreamSlice stream_slice)
 {
     SSLState *ssl_state = (SSLState *)alstate;
+    ssl_state->tx_data.updated_tc = true;
+    ssl_state->tx_data.updated_ts = true;
     uint32_t counter = 0;
     ssl_state->f = f;
     const uint8_t *input = StreamSliceGetData(&stream_slice);
     const uint8_t *init_input = input;
     int32_t input_len = (int32_t)StreamSliceGetDataLen(&stream_slice);
 
-    if (input == NULL &&
+    if ((input == NULL || input_len == 0) &&
             ((direction == 0 && AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TS)) ||
                     (direction == 1 &&
                             AppLayerParserStateIssetFlag(pstate, APP_LAYER_PARSER_EOF_TC)))) {
@@ -2566,7 +2750,7 @@ static AppLayerResult SSLDecode(Flow *f, uint8_t direction, void *alstate,
                 input += r.retval;
                 SCLogDebug("returning consumed %" PRIuMAX " needed %u",
                         (uintmax_t)(input - init_input), r.needed);
-                SCReturnStruct(APP_LAYER_INCOMPLETE(input - init_input, r.needed));
+                SCReturnStruct(APP_LAYER_INCOMPLETE((uint32_t)(input - init_input), r.needed));
             }
             input_len -= r.retval;
             input += r.retval;
@@ -2591,7 +2775,7 @@ static AppLayerResult SSLDecode(Flow *f, uint8_t direction, void *alstate,
                 input += r.retval;
                 SCLogDebug("returning consumed %" PRIuMAX " needed %u",
                         (uintmax_t)(input - init_input), r.needed);
-                SCReturnStruct(APP_LAYER_INCOMPLETE(input - init_input, r.needed));
+                SCReturnStruct(APP_LAYER_INCOMPLETE((uint32_t)(input - init_input), r.needed));
             }
             input_len -= r.retval;
             input += r.retval;
@@ -2654,9 +2838,21 @@ static void *SSLStateAlloc(void *orig_state, AppProto proto_orig)
     memset(ssl_state->client_connp.random, 0, TLS_RANDOM_LEN);
     memset(ssl_state->server_connp.random, 0, TLS_RANDOM_LEN);
     TAILQ_INIT(&ssl_state->server_connp.certs);
+    TAILQ_INIT(&ssl_state->server_connp.alpns);
     TAILQ_INIT(&ssl_state->client_connp.certs);
+    TAILQ_INIT(&ssl_state->client_connp.alpns);
 
     return (void *)ssl_state;
+}
+
+static void SSLStateCertSANFree(SSLStateConnp *connp)
+{
+    if (connp->cert0_sans) {
+        for (uint16_t i = 0; i < connp->cert0_sans_len; i++) {
+            rs_cstring_free(connp->cert0_sans[i]);
+        }
+        SCFree(connp->cert0_sans);
+    }
 }
 
 /**
@@ -2696,6 +2892,8 @@ static void SSLStateFree(void *p)
     if (ssl_state->server_connp.session_id)
         SCFree(ssl_state->server_connp.session_id);
 
+    if (ssl_state->client_connp.ja4)
+        SCJA4Free(ssl_state->client_connp.ja4);
     if (ssl_state->client_connp.ja3_str)
         Ja3BufferFree(&ssl_state->client_connp.ja3_str);
     if (ssl_state->client_connp.ja3_hash)
@@ -2706,6 +2904,9 @@ static void SSLStateFree(void *p)
         SCFree(ssl_state->server_connp.ja3_hash);
     if (ssl_state->server_connp.hs_buffer)
         SCFree(ssl_state->server_connp.hs_buffer);
+
+    SSLStateCertSANFree(&ssl_state->server_connp);
+    SSLStateCertSANFree(&ssl_state->client_connp);
 
     AppLayerDecoderEventsFreeEvents(&ssl_state->tx_data.events);
 
@@ -2730,9 +2931,19 @@ static void SSLStateFree(void *p)
     }
     TAILQ_INIT(&ssl_state->client_connp.certs);
 
-    SCFree(ssl_state);
+    SSLAlpns *a;
+    while ((a = TAILQ_FIRST(&ssl_state->server_connp.alpns))) {
+        TAILQ_REMOVE(&ssl_state->server_connp.alpns, a, next);
+        SCFree(a);
+    }
+    TAILQ_INIT(&ssl_state->server_connp.alpns);
+    while ((a = TAILQ_FIRST(&ssl_state->client_connp.alpns))) {
+        TAILQ_REMOVE(&ssl_state->client_connp.alpns, a, next);
+        SCFree(a);
+    }
+    TAILQ_INIT(&ssl_state->client_connp.alpns);
 
-    return;
+    SCFree(ssl_state);
 }
 
 static void SSLStateTransactionFree(void *state, uint64_t tx_id)
@@ -2771,25 +2982,18 @@ static const char *SSLStateGetFrameNameById(const uint8_t frame_id)
     return name;
 }
 
-static int SSLStateGetEventInfo(const char *event_name,
-                         int *event_id, AppLayerEventType *event_type)
+static int SSLStateGetEventInfo(
+        const char *event_name, uint8_t *event_id, AppLayerEventType *event_type)
 {
-    *event_id = SCMapEnumNameToValue(event_name, tls_decoder_event_table);
-    if (*event_id == -1) {
-        SCLogError("event \"%s\" not present in "
-                   "ssl's enum map table.",
-                event_name);
-        /* yes this is fatal */
-        return -1;
+    if (SCAppLayerGetEventIdByName(event_name, tls_decoder_event_table, event_id) == 0) {
+        *event_type = APP_LAYER_EVENT_TYPE_TRANSACTION;
+        return 0;
     }
-
-    *event_type = APP_LAYER_EVENT_TYPE_TRANSACTION;
-
-    return 0;
+    return -1;
 }
 
-static int SSLStateGetEventInfoById(int event_id, const char **event_name,
-                                    AppLayerEventType *event_type)
+static int SSLStateGetEventInfoById(
+        uint8_t event_id, const char **event_name, AppLayerEventType *event_type)
 {
     *event_name = SCMapEnumValueToName(event_id, tls_decoder_event_table);
     if (*event_name == NULL) {
@@ -2949,6 +3153,56 @@ static int SSLRegisterPatternsForProtocolDetection(void)
     return 0;
 }
 
+#ifdef HAVE_JA3
+static void CheckJA3Enabled(void)
+{
+    const char *strval = NULL;
+    /* Check if we should generate JA3 fingerprints */
+    int enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
+    if (ConfGet("app-layer.protocols.tls.ja3-fingerprints", &strval) != 1) {
+        enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
+    } else if (strcmp(strval, "auto") == 0) {
+        enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
+    } else if (ConfValIsFalse(strval)) {
+        enable_ja3 = 0;
+        ssl_config.disable_ja3 = true;
+    } else if (ConfValIsTrue(strval)) {
+        enable_ja3 = true;
+    }
+    SC_ATOMIC_SET(ssl_config.enable_ja3, enable_ja3);
+    if (!ssl_config.disable_ja3 && !g_disable_hashing) {
+        /* The feature is available, i.e. _could_ be activated by a rule or
+            even is enabled in the configuration. */
+        ProvidesFeature(FEATURE_JA3);
+    }
+}
+#endif /* HAVE_JA3 */
+
+#ifdef HAVE_JA4
+static void CheckJA4Enabled(void)
+{
+    const char *strval = NULL;
+    /* Check if we should generate JA4 fingerprints */
+    int enable_ja4 = SSL_CONFIG_DEFAULT_JA4;
+    if (ConfGet("app-layer.protocols.tls.ja4-fingerprints", &strval) != 1) {
+        enable_ja4 = SSL_CONFIG_DEFAULT_JA4;
+    } else if (strcmp(strval, "auto") == 0) {
+        enable_ja4 = SSL_CONFIG_DEFAULT_JA4;
+    } else if (ConfValIsFalse(strval)) {
+        enable_ja4 = 0;
+        ssl_config.disable_ja4 = true;
+    } else if (ConfValIsTrue(strval)) {
+        enable_ja4 = true;
+    }
+    SC_ATOMIC_SET(ssl_config.enable_ja4, enable_ja4);
+    if (!ssl_config.disable_ja4 && !g_disable_hashing) {
+        /* The feature is available, i.e. _could_ be activated by a rule or
+            even is enabled in the configuration. */
+        ProvidesFeature(FEATURE_JA4);
+    }
+}
+#endif /* HAVE_JA4 */
+
 /**
  * \brief Function to register the SSL protocol parser and other functions
  */
@@ -3048,37 +3302,35 @@ void RegisterSSLParsers(void)
         }
         SCLogDebug("ssl_config.encrypt_mode %u", ssl_config.encrypt_mode);
 
-        /* Check if we should generate JA3 fingerprints */
-        int enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
-        const char *strval = NULL;
-        if (ConfGet("app-layer.protocols.tls.ja3-fingerprints", &strval) != 1) {
-            enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
-        } else if (strcmp(strval, "auto") == 0) {
-            enable_ja3 = SSL_CONFIG_DEFAULT_JA3;
-        } else if (ConfValIsFalse(strval)) {
-            enable_ja3 = 0;
-            ssl_config.disable_ja3 = true;
-        } else if (ConfValIsTrue(strval)) {
-            enable_ja3 = true;
-        }
-        SC_ATOMIC_SET(ssl_config.enable_ja3, enable_ja3);
+#ifdef HAVE_JA3
+        CheckJA3Enabled();
+#endif /* HAVE_JA3 */
+#ifdef HAVE_JA4
+        CheckJA4Enabled();
+#endif /* HAVE_JA4 */
 
         if (g_disable_hashing) {
             if (SC_ATOMIC_GET(ssl_config.enable_ja3)) {
                 SCLogWarning("MD5 calculation has been disabled, disabling JA3");
                 SC_ATOMIC_SET(ssl_config.enable_ja3, 0);
             }
+            if (SC_ATOMIC_GET(ssl_config.enable_ja4)) {
+                SCLogWarning("Hashing has been disabled, disabling JA4");
+                SC_ATOMIC_SET(ssl_config.enable_ja4, 0);
+            }
         } else {
             if (RunmodeIsUnittests()) {
+#ifdef HAVE_JA3
                 SC_ATOMIC_SET(ssl_config.enable_ja3, 1);
+#endif /* HAVE_JA3 */
+#ifdef HAVE_JA4
+                SC_ATOMIC_SET(ssl_config.enable_ja4, 1);
+#endif /* HAVE_JA4 */
             }
         }
     } else {
-        SCLogConfig("Parsed disabled for %s protocol. Protocol detection"
-                  "still on.", proto_name);
+        SCLogConfig("Parser disabled for %s protocol. Protocol detection still on.", proto_name);
     }
-
-    return;
 }
 
 /**
@@ -3098,10 +3350,45 @@ void SSLEnableJA3(void)
     SC_ATOMIC_SET(ssl_config.enable_ja3, 1);
 }
 
+/**
+ * \brief if not explicitly disabled in config, enable ja4 support
+ *
+ * Implemented using atomic to allow rule reloads to do this at
+ * runtime.
+ */
+void SSLEnableJA4(void)
+{
+    if (g_disable_hashing || ssl_config.disable_ja4) {
+        return;
+    }
+    if (SC_ATOMIC_GET(ssl_config.enable_ja4)) {
+        return;
+    }
+    SC_ATOMIC_SET(ssl_config.enable_ja4, 1);
+}
+
+/**
+ * \brief return whether ja3 is effectively enabled
+ *
+ * This means that it either has been enabled explicitly or has been
+ * enabled by having loaded a rule while not being explicitly disabled.
+ *
+ * \retval true if enabled, false otherwise
+ */
 bool SSLJA3IsEnabled(void)
 {
-    if (SC_ATOMIC_GET(ssl_config.enable_ja3)) {
-        return true;
-    }
-    return false;
+    return SC_ATOMIC_GET(ssl_config.enable_ja3);
+}
+
+/**
+ * \brief return whether ja4 is effectively enabled
+ *
+ * This means that it either has been enabled explicitly or has been
+ * enabled by having loaded a rule while not being explicitly disabled.
+ *
+ * \retval true if enabled, false otherwise
+ */
+bool SSLJA4IsEnabled(void)
+{
+    return SC_ATOMIC_GET(ssl_config.enable_ja4);
 }

@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2020 Open Information Security Foundation
+/* Copyright (C) 2011-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -59,98 +59,75 @@
 #include "source-af-packet.h"
 #include "util-bpf.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 const char *RunModeAFPGetDefaultMode(void)
 {
     return "workers";
 }
 
-static int AFPRunModeIsIPS(void)
+static bool AFPRunModeIsIPS(void)
 {
     int nlive = LiveGetDeviceCount();
-    int ldev;
-    ConfNode *if_root;
-    ConfNode *if_default = NULL;
-    ConfNode *af_packet_node;
-    int has_ips = 0;
-    int has_ids = 0;
+    bool has_ips = false;
+    bool has_ids = false;
 
-    /* Find initial node */
-    af_packet_node = ConfGetNode("af-packet");
+    ConfNode *af_packet_node = ConfGetNode("af-packet");
     if (af_packet_node == NULL) {
-        return 0;
+        SCLogConfig("no 'af-packet' section in the yaml, default to IDS");
+        return false;
     }
 
-    if_default = ConfNodeLookupKeyValue(af_packet_node, "interface", "default");
+    ConfNode *if_default = ConfNodeLookupKeyValue(af_packet_node, "interface", "default");
 
-    for (ldev = 0; ldev < nlive; ldev++) {
+    for (int ldev = 0; ldev < nlive; ldev++) {
         const char *live_dev = LiveGetDeviceName(ldev);
         if (live_dev == NULL) {
-            SCLogError("Problem with config file");
-            return 0;
+            SCLogConfig("invalid livedev at index %d, default to IDS", ldev);
+            return false;
         }
-        const char *copymodestr = NULL;
-        if_root = ConfFindDeviceConfig(af_packet_node, live_dev);
-
+        ConfNode *if_root = ConfFindDeviceConfig(af_packet_node, live_dev);
         if (if_root == NULL) {
             if (if_default == NULL) {
-                SCLogError("Problem with config file");
-                return 0;
+                SCLogConfig(
+                        "no 'af-packet' section for '%s' or 'default' in the yaml, default to IDS",
+                        live_dev);
+                return false;
             }
             if_root = if_default;
         }
 
-        if (ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) == 1) {
+        const char *copymodestr = NULL;
+        const char *copyifacestr = NULL;
+        if (ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) == 1 &&
+                ConfGetChildValue(if_root, "copy-iface", &copyifacestr) == 1) {
             if (strcmp(copymodestr, "ips") == 0) {
-                has_ips = 1;
+                has_ips = true;
             } else {
-                has_ids = 1;
+                has_ids = true;
             }
         } else {
-            has_ids = 1;
+            has_ids = true;
         }
     }
 
     if (has_ids && has_ips) {
-        SCLogWarning("AF_PACKET using both IPS and TAP/IDS mode, this will not "
-                     "be allowed in Suricata 8 due to undefined behavior. See ticket #5588.");
-        for (ldev = 0; ldev < nlive; ldev++) {
-            const char *live_dev = LiveGetDeviceName(ldev);
-            if (live_dev == NULL) {
-                SCLogError("Problem with config file");
-                return 0;
-            }
-            if_root = ConfNodeLookupKeyValue(af_packet_node, "interface", live_dev);
-            const char *copymodestr = NULL;
-
-            if (if_root == NULL) {
-                if (if_default == NULL) {
-                    SCLogError("Problem with config file");
-                    return 0;
-                }
-                if_root = if_default;
-            }
-
-            if (!((ConfGetChildValueWithDefault(if_root, if_default, "copy-mode", &copymodestr) ==
-                          1) &&
-                        (strcmp(copymodestr, "ips") == 0))) {
-                SCLogError("AF_PACKET IPS mode used and interface '%s' is in IDS or TAP mode. "
-                           "Sniffing '%s' but expect bad result as stream-inline is activated.",
-                        live_dev, live_dev);
-            }
-        }
+        SCLogError("using both IPS and TAP/IDS mode is not allowed due to undefined behavior. See "
+                   "ticket #5588.");
+        return false;
     }
 
     return has_ips;
 }
 
-static void AFPRunModeEnableIPS(void)
+static int AFPRunModeEnableIPS(void)
 {
-    if (AFPRunModeIsIPS()) {
+    bool r = AFPRunModeIsIPS();
+    if (r) {
         SCLogInfo("Setting IPS mode");
         EngineModeSetIPS();
     }
+    return r;
 }
 
 void RunModeIdsAFPRegister(void)
@@ -166,7 +143,6 @@ void RunModeIdsAFPRegister(void)
             "each flow are assigned to a single detect "
             "thread.",
             RunModeIdsAFPAutoFp, AFPRunModeEnableIPS);
-    return;
 }
 
 
@@ -301,20 +277,20 @@ static void *ParseAFPConfig(const char *iface)
         }
     }
 
-    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "use-mmap", (int *)&boolval) == 1) {
+    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "use-mmap", &boolval) == 1) {
         if (!boolval) {
             SCLogWarning(
                     "%s: \"use-mmap\" option is obsolete: mmap is always enabled", aconf->iface);
         }
     }
 
-    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "mmap-locked", (int *)&boolval);
+    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "mmap-locked", &boolval);
     if (boolval) {
         SCLogConfig("%s: enabling locked memory for mmap", aconf->iface);
         aconf->flags |= AFP_MMAP_LOCKED;
     }
 
-    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "tpacket-v3", (int *)&boolval) == 1) {
+    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "tpacket-v3", &boolval) == 1) {
         if (boolval) {
             if (strcasecmp(RunmodeGetActive(), "workers") == 0) {
 #ifdef HAVE_TPACKET_V3
@@ -335,8 +311,7 @@ static void *ParseAFPConfig(const char *iface)
         }
     }
 
-    (void)ConfGetChildValueBoolWithDefault(
-            if_root, if_default, "use-emergency-flush", (int *)&boolval);
+    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "use-emergency-flush", &boolval);
     if (boolval) {
         SCLogConfig("%s: using emergency ring flush", aconf->iface);
         aconf->flags |= AFP_EMERGENCY_MODE;
@@ -449,7 +424,7 @@ static void *ParseAFPConfig(const char *iface)
 
 #ifdef HAVE_PACKET_EBPF
     boolval = false;
-    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "pinned-maps", (int *)&boolval) == 1) {
+    if (ConfGetChildValueBoolWithDefault(if_root, if_default, "pinned-maps", &boolval) == 1) {
         if (boolval) {
             SCLogConfig("%s: using pinned maps", aconf->iface);
             aconf->ebpf_t_config.flags |= EBPF_PINNED_MAPS;
@@ -565,8 +540,9 @@ static void *ParseAFPConfig(const char *iface)
         }
 
         boolval = true;
-        if (ConfGetChildValueBoolWithDefault(if_root, if_default, "use-percpu-hash", (int *)&boolval) == 1) {
-            if (boolval == false) {
+        if (ConfGetChildValueBoolWithDefault(if_root, if_default, "use-percpu-hash", &boolval) ==
+                1) {
+            if (!boolval) {
                 SCLogConfig("%s: not using percpu hash", aconf->iface);
                 aconf->ebpf_t_config.cpus_count = 1;
             }
@@ -642,7 +618,7 @@ static void *ParseAFPConfig(const char *iface)
         aconf->block_timeout = 10;
     }
 
-    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", (int *)&boolval);
+    (void)ConfGetChildValueBoolWithDefault(if_root, if_default, "disable-promisc", &boolval);
     if (boolval) {
         SCLogConfig("%s: disabling promiscuous mode", aconf->iface);
         aconf->promisc = 0;
@@ -706,7 +682,7 @@ finalize:
     (void) SC_ATOMIC_ADD(aconf->ref, aconf->threads);
 
     if (aconf->ring_size != 0) {
-        if (aconf->ring_size * aconf->threads < max_pending_packets) {
+        if (aconf->ring_size * aconf->threads < (int)max_pending_packets) {
             aconf->ring_size = max_pending_packets / aconf->threads + 1;
             SCLogWarning("%s: inefficient setup: ring-size < max_pending_packets. "
                          "Resetting to decent value %d.",

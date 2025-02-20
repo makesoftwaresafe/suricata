@@ -1,4 +1,4 @@
-/* Copyright (C) 2023 Open Information Security Foundation
+/* Copyright (C) 2023-2025 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -15,12 +15,14 @@
  * 02110-1301, USA.
  */
 
-#ifndef __DETECT_FLOW_PKTS_H__
-#define __DETECT_FLOW_PKTS_H__
+#ifndef SURICATA_DETECT_FLOW_PKTS_H
+#define SURICATA_DETECT_FLOW_PKTS_H
 
-void DetectFlowPktsToClientRegister(void);
+void DetectFlowPktsRegister(void);
 void DetectFlowPktsToServerRegister(void);
-void DetectFlowBytesToClientRegister(void);
+void DetectFlowPktsToClientRegister(void);
+void DetectFlowBytesRegister(void);
 void DetectFlowBytesToServerRegister(void);
+void DetectFlowBytesToClientRegister(void);
 
-#endif /* __DETECT_FLOW_PKTS_H__ */
+#endif /* SURICATA_DETECT_FLOW_PKTS_H */

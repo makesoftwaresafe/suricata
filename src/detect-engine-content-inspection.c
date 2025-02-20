@@ -62,9 +62,7 @@
 #include "util-unittest-helper.h"
 #include "util-profiling.h"
 
-#ifdef HAVE_LUA
 #include "util-lua.h"
-#endif
 
 #ifdef UNITTESTS
 thread_local uint32_t ut_inspection_recursion_counter = 0;
@@ -384,6 +382,13 @@ static int DetectEngineContentInspectionInternal(DetectEngineThreadCtx *det_ctx,
                     prev_offset);
         } while(1);
 
+    } else if (smd->type == DETECT_ABSENT) {
+        const DetectAbsentData *id = (DetectAbsentData *)smd->ctx;
+        if (!id->or_else) {
+            // we match only on absent buffer
+            goto no_match;
+        }
+        goto match;
     } else if (smd->type == DETECT_ISDATAAT) {
         SCLogDebug("inspecting isdataat");
 
@@ -543,19 +548,17 @@ static int DetectEngineContentInspectionInternal(DetectEngineThreadCtx *det_ctx,
 
     } else if (smd->type == DETECT_BYTE_EXTRACT) {
 
-        const DetectByteExtractData *bed = (const DetectByteExtractData *)smd->ctx;
+        const SCDetectByteExtractData *bed = (const SCDetectByteExtractData *)smd->ctx;
         uint8_t endian = bed->endian;
 
         /* if we have dce enabled we will have to use the endianness
          * specified by the dce header */
-        if ((bed->flags & DETECT_BYTE_EXTRACT_FLAG_ENDIAN) &&
-            endian == DETECT_BYTE_EXTRACT_ENDIAN_DCE &&
-            flags & (DETECT_CI_FLAGS_DCE_LE|DETECT_CI_FLAGS_DCE_BE)) {
+        if ((bed->flags & DETECT_BYTE_EXTRACT_FLAG_ENDIAN) && endian == EndianDCE &&
+                flags & (DETECT_CI_FLAGS_DCE_LE | DETECT_CI_FLAGS_DCE_BE)) {
 
             /* enable the endianness flag temporarily.  once we are done
              * processing we reset the flags to the original value*/
-            endian |= ((flags & DETECT_CI_FLAGS_DCE_LE) ?
-                       DETECT_BYTE_EXTRACT_ENDIAN_LITTLE : DETECT_BYTE_EXTRACT_ENDIAN_BIG);
+            endian |= ((flags & DETECT_CI_FLAGS_DCE_LE) ? LittleEndian : BigEndian);
         }
 
         if (DetectByteExtractDoMatch(det_ctx, smd, s, buffer, buffer_len,
@@ -635,7 +638,7 @@ static int DetectEngineContentInspectionInternal(DetectEngineThreadCtx *det_ctx,
         }
         goto no_match_discontinue;
 
-    } else if (smd->type == DETECT_AL_URILEN) {
+    } else if (smd->type == DETECT_URILEN) {
         SCLogDebug("inspecting uri len");
 
         int r;
@@ -650,9 +653,7 @@ static int DetectEngineContentInspectionInternal(DetectEngineThreadCtx *det_ctx,
             goto match;
         }
         goto no_match_discontinue;
-#ifdef HAVE_LUA
-    }
-    else if (smd->type == DETECT_LUA) {
+    } else if (smd->type == DETECT_LUA) {
         SCLogDebug("lua starting");
 
         if (DetectLuaMatchBuffer(det_ctx, s, smd, buffer, buffer_len,
@@ -663,7 +664,6 @@ static int DetectEngineContentInspectionInternal(DetectEngineThreadCtx *det_ctx,
         }
         SCLogDebug("lua match");
         goto match;
-#endif /* HAVE_LUA */
     } else if (smd->type == DETECT_BASE64_DECODE) {
         if (DetectBase64DecodeDoMatch(det_ctx, s, smd, buffer, buffer_len)) {
             if (s->sm_arrays[DETECT_SM_LIST_BASE64_DATA] != NULL) {
@@ -762,6 +762,24 @@ bool DetectEngineContentInspectionBuffer(DetectEngineCtx *de_ctx, DetectEngineTh
         return true;
     else
         return false;
+}
+
+bool DetectContentInspectionMatchOnAbsentBuffer(const SigMatchData *smd)
+{
+    // we will match on NULL buffers there is one absent
+    bool absent_data = false;
+    while (1) {
+        if (smd->type == DETECT_ABSENT) {
+            absent_data = true;
+            break;
+        }
+        if (smd->is_last) {
+            break;
+        }
+        // smd does not get reused after this loop
+        smd++;
+    }
+    return absent_data;
 }
 
 #ifdef UNITTESTS

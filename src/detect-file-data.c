@@ -94,24 +94,24 @@ void DetectFiledataRegister(void)
 }
 
 static void SetupDetectEngineConfig(DetectEngineCtx *de_ctx) {
-    if (de_ctx->filedata_config_initialized)
+    if (de_ctx->filedata_config)
         return;
 
+    de_ctx->filedata_config = SCMalloc(g_alproto_max * sizeof(DetectFileDataCfg));
+    if (unlikely(de_ctx->filedata_config == NULL))
+        return;
     /* initialize default */
-    for (int i = 0; i < (int)ALPROTO_MAX; i++) {
+    for (AppProto i = 0; i < g_alproto_max; i++) {
         de_ctx->filedata_config[i].content_limit = FILEDATA_CONTENT_LIMIT;
         de_ctx->filedata_config[i].content_inspect_min_size = FILEDATA_CONTENT_INSPECT_MIN_SIZE;
-        de_ctx->filedata_config[i].content_inspect_window = FILEDATA_CONTENT_INSPECT_WINDOW;
     }
 
     /* add protocol specific settings here */
 
     /* SMTP */
     de_ctx->filedata_config[ALPROTO_SMTP].content_limit = smtp_config.content_limit;
-    de_ctx->filedata_config[ALPROTO_SMTP].content_inspect_min_size = smtp_config.content_inspect_min_size;
-    de_ctx->filedata_config[ALPROTO_SMTP].content_inspect_window = smtp_config.content_inspect_window;
-
-    de_ctx->filedata_config_initialized = true;
+    de_ctx->filedata_config[ALPROTO_SMTP].content_inspect_min_size =
+            smtp_config.content_inspect_min_size;
 }
 
 /**
@@ -221,9 +221,12 @@ static InspectionBuffer *FiledataGetDataCallback(DetectEngineThreadCtx *det_ctx,
 
     const uint64_t file_size = FileDataSize(cur_file);
     const DetectEngineCtx *de_ctx = det_ctx->de_ctx;
-    const uint32_t content_limit = de_ctx->filedata_config[f->alproto].content_limit;
-    const uint32_t content_inspect_min_size =
-            de_ctx->filedata_config[f->alproto].content_inspect_min_size;
+    uint32_t content_limit = FILEDATA_CONTENT_LIMIT;
+    uint32_t content_inspect_min_size = FILEDATA_CONTENT_INSPECT_MIN_SIZE;
+    if (de_ctx->filedata_config) {
+        content_limit = de_ctx->filedata_config[f->alproto].content_limit;
+        content_inspect_min_size = de_ctx->filedata_config[f->alproto].content_inspect_min_size;
+    }
 
     SCLogDebug("[list %d] content_limit %u, content_inspect_min_size %u", list_id, content_limit,
             content_inspect_min_size);
@@ -257,7 +260,7 @@ static InspectionBuffer *FiledataGetDataCallback(DetectEngineThreadCtx *det_ctx,
         ips = htp_state->cfg->http_body_inline;
 
         const bool body_done = AppLayerParserGetStateProgress(IPPROTO_TCP, ALPROTO_HTTP1, tx,
-                                       flow_flags) > HTP_RESPONSE_BODY;
+                                       flow_flags) > HTP_RESPONSE_PROGRESS_BODY;
 
         SCLogDebug("response.body_limit %u file_size %" PRIu64
                    ", cur_file->inspect_min_size %" PRIu32 ", EOF %s, progress > body? %s",
@@ -395,10 +398,18 @@ uint8_t DetectEngineInspectFiledata(DetectEngineCtx *de_ctx, DetectEngineThreadC
         transforms = engine->v2.transforms;
     }
 
-    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, alstate, txv, flags);
+    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, txv, flags);
     FileContainer *ffc = files.fc;
     if (ffc == NULL) {
         return DETECT_ENGINE_INSPECT_SIG_CANT_MATCH_FILES;
+    }
+    if (ffc->head == NULL) {
+        const bool eof = (AppLayerParserGetStateProgress(f->proto, f->alproto, txv, flags) >
+                          engine->progress);
+        if (eof && engine->match_on_null) {
+            return DETECT_ENGINE_INSPECT_SIG_MATCH;
+        }
+        return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     }
 
     int local_file_id = 0;
@@ -448,7 +459,7 @@ static void PrefilterTxFiledata(DetectEngineThreadCtx *det_ctx, const void *pect
     const MpmCtx *mpm_ctx = ctx->mpm_ctx;
     const int list_id = ctx->list_id;
 
-    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, f->alstate, txv, flags);
+    AppLayerGetFileState files = AppLayerParserGetTxFiles(f, txv, flags);
     FileContainer *ffc = files.fc;
     if (ffc != NULL) {
         int local_file_id = 0;

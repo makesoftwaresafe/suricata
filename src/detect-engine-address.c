@@ -85,7 +85,6 @@ void DetectAddressFree(DetectAddress *ag)
         return;
 
     SCFree(ag);
-    return;
 }
 
 /**
@@ -136,23 +135,6 @@ DetectAddress *DetectAddressCopy(DetectAddress *orig)
     COPY_ADDRESS(&orig->ip2, &ag->ip2);
     return ag;
 }
-
-#ifdef DEBUG
-/**
- * \brief Prints the address data information for all the DetectAddress
- *        instances in the DetectAddress list sent as the argument.
- *
- * \param head Pointer to a list of DetectAddress instances.
- */
-void DetectAddressPrintList(DetectAddress *head)
-{
-    SCLogInfo("list:");
-    for (DetectAddress *cur = head; cur != NULL; cur = cur->next) {
-        DetectAddressPrint(cur);
-    }
-    SCLogInfo("endlist");
-}
-#endif
 
 /**
  * \internal
@@ -1359,7 +1341,6 @@ void DetectAddressMapFree(DetectEngineCtx *de_ctx)
 
     HashListTableFree(de_ctx->address_table);
     de_ctx->address_table = NULL;
-    return;
 }
 
 static bool DetectAddressMapAdd(DetectEngineCtx *de_ctx, const char *string,
@@ -1377,7 +1358,7 @@ static bool DetectAddressMapAdd(DetectEngineCtx *de_ctx, const char *string,
     map->address = address;
     map->contains_negation = contains_negation;
 
-    if (HashListTableAdd(de_ctx->address_table, (void *)map, 0) != 0) {
+    if (HashListTableAdd(de_ctx->address_table, map, 0) != 0) {
         SCFree(map->string);
         SCFree(map);
         return false;
@@ -1504,8 +1485,6 @@ void DetectAddressHeadCleanup(DetectAddressHead *gh)
             gh->ipv6_head = NULL;
         }
     }
-
-    return;
 }
 
 /**
@@ -1804,8 +1783,6 @@ static void DetectAddressPrint(DetectAddress *gr)
         SCLogDebug("%s/%s", ip, mask);
 //        printf("%s/%s", ip, mask);
     }
-
-    return;
 }
 #endif
 

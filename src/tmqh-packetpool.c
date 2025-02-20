@@ -35,7 +35,7 @@
 #include "util-validate.h"
 #include "action-globals.h"
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 /* Number of freed packet to save for one pool before freeing them. */
 #define MAX_PENDING_RETURN_PACKETS 32
@@ -127,10 +127,8 @@ static void PacketPoolGetReturnedPackets(PktPool *pool)
 Packet *PacketPoolGetPacket(void)
 {
     PktPool *pool = GetThreadPacketPool();
-#ifdef DEBUG_VALIDATION
-    BUG_ON(pool->initialized == 0);
-    BUG_ON(pool->destroyed == 1);
-#endif /* DEBUG_VALIDATION */
+    DEBUG_VALIDATE_BUG_ON(pool->initialized == 0);
+    DEBUG_VALIDATE_BUG_ON(pool->destroyed == 1);
     if (pool->head) {
         /* Stack is not empty. */
         Packet *p = pool->head;
@@ -243,22 +241,6 @@ void PacketPoolReturnPacket(Packet *p)
     }
 }
 
-void PacketPoolInitEmpty(void)
-{
-    PktPool *my_pool = GetThreadPacketPool();
-
-#ifdef DEBUG_VALIDATION
-    BUG_ON(my_pool->initialized);
-    my_pool->initialized = 1;
-    my_pool->destroyed = 0;
-#endif /* DEBUG_VALIDATION */
-
-    SCMutexInit(&my_pool->return_stack.mutex, NULL);
-    SCCondInit(&my_pool->return_stack.cond, NULL);
-    SC_ATOMIC_INIT(my_pool->return_stack.return_threshold);
-    SC_ATOMIC_SET(my_pool->return_stack.return_threshold, 32);
-}
-
 void PacketPoolInit(void)
 {
     PktPool *my_pool = GetThreadPacketPool();
@@ -277,8 +259,7 @@ void PacketPoolInit(void)
     /* pre allocate packets */
     SCLogDebug("preallocating packets... packet size %" PRIuMAX "",
                (uintmax_t)SIZE_OF_PACKET);
-    int i = 0;
-    for (i = 0; i < max_pending_packets; i++) {
+    for (uint32_t i = 0; i < max_pending_packets; i++) {
         Packet *p = PacketGetFromAlloc();
         if (unlikely(p == NULL)) {
             FatalError("Fatal error encountered while allocating a packet. Exiting...");
@@ -337,7 +318,7 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
     SCEnter();
     SCLogDebug("Packet %p, p->root %p, alloced %s", p, p->root, BOOL2STR(p->pool == NULL));
 
-    if (IS_TUNNEL_PKT(p)) {
+    if (PacketIsTunnel(p)) {
         SCLogDebug("Packet %p is a tunnel packet: %s",
             p,p->root ? "upper layer" : "tunnel root");
 
@@ -345,9 +326,9 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
         SCSpinlock *lock = p->root ? &p->root->persistent.tunnel_lock : &p->persistent.tunnel_lock;
         SCSpinLock(lock);
 
-        if (IS_TUNNEL_ROOT_PKT(p)) {
+        if (PacketIsTunnelRoot(p)) {
             SCLogDebug("IS_TUNNEL_ROOT_PKT == TRUE");
-            CaptureStatsUpdate(t, p);
+            CaptureStatsUpdate(t, p); // TODO move out of lock
 
             const uint16_t outstanding = TUNNEL_PKT_TPR(p) - TUNNEL_PKT_RTV(p);
             SCLogDebug("root pkt: outstanding %u", outstanding);
@@ -366,7 +347,7 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
                  * packets, return this to the pool. It's still referenced
                  * by the tunnel packets, and we will return it
                  * when we handle them */
-                SET_TUNNEL_PKT_VERDICTED(p);
+                PacketTunnelSetVerdicted(p);
 
                 PACKET_PROFILING_END(p);
                 SCSpinUnlock(lock);
@@ -381,9 +362,7 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
             /* all tunnel packets are processed except us. Root already
              * processed. So return tunnel pkt and root packet to the
              * pool. */
-            if (outstanding == 0 &&
-                    p->root && IS_TUNNEL_PKT_VERDICTED(p->root))
-            {
+            if (outstanding == 0 && p->root && PacketTunnelIsVerdicted(p->root)) {
                 SCLogDebug("root verdicted == true && no outstanding");
 
                 /* handle freeing the root as well*/
@@ -398,8 +377,8 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
                  * so get rid of the tunnel pkt only */
 
                 SCLogDebug("NOT IS_TUNNEL_PKT_VERDICTED (%s) || "
-                        "outstanding > 0 (%u)",
-                        (p->root && IS_TUNNEL_PKT_VERDICTED(p->root)) ? "true" : "false",
+                           "outstanding > 0 (%u)",
+                        (p->root && PacketTunnelIsVerdicted(p->root)) ? "true" : "false",
                         outstanding);
 
                 /* fall through */
@@ -414,12 +393,12 @@ void TmqhOutputPacketpool(ThreadVars *t, Packet *p)
     }
 
     SCLogDebug("[packet %p][%s] %s", p,
-            IS_TUNNEL_PKT(p) ? IS_TUNNEL_ROOT_PKT(p) ? "tunnel::root" : "tunnel::leaf"
-                             : "no tunnel",
+            PacketIsTunnel(p) ? PacketIsTunnelRoot(p) ? "tunnel::root" : "tunnel::leaf"
+                              : "no tunnel",
             (p->action & ACTION_DROP) ? "DROP" : "no drop");
 
     /* we're done with the tunnel root now as well */
-    if (proot == true) {
+    if (proot) {
         SCLogDebug("getting rid of root pkt... alloc'd %s", BOOL2STR(p->root->pool == NULL));
 
         PacketReleaseRefs(p->root);
@@ -456,8 +435,6 @@ void TmqhReleasePacketsToPacketPool(PacketQueue *pq)
         DEBUG_VALIDATE_BUG_ON(p->flow != NULL);
         TmqhOutputPacketpool(NULL, p);
     }
-
-    return;
 }
 
 /** number of packets to keep reserved when calculating the pending
@@ -481,8 +458,8 @@ void TmqhReleasePacketsToPacketPool(PacketQueue *pq)
  */
 void PacketPoolPostRunmodes(void)
 {
-    extern uint16_t max_pending_packets;
-    uint16_t pending_packets = max_pending_packets;
+    extern uint32_t max_pending_packets;
+    uint32_t pending_packets = max_pending_packets;
     if (pending_packets < RESERVED_PACKETS) {
         FatalError("'max-pending-packets' setting "
                    "must be at least %d",

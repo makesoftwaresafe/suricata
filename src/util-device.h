@@ -15,8 +15,8 @@
  * 02110-1301, USA.
  */
 
-#ifndef __UTIL_DEVICE_H__
-#define __UTIL_DEVICE_H__
+#ifndef SURICATA_UTIL_DEVICE_H
+#define SURICATA_UTIL_DEVICE_H
 
 #ifdef HAVE_DPDK
 #include <rte_mempool.h>
@@ -81,7 +81,6 @@ void LiveDevRegisterExtension(void);
 int LiveRegisterDeviceName(const char *dev);
 int LiveRegisterDevice(const char *dev);
 int LiveDevUseBypass(LiveDevice *dev);
-void LiveDevSetBypassStats(LiveDevice *dev, uint64_t cnt, int family);
 void LiveDevAddBypassStats(LiveDevice *dev, uint64_t cnt, int family);
 void LiveDevSubBypassStats(LiveDevice *dev, uint64_t cnt, int family);
 void LiveDevAddBypassFail(LiveDevice *dev, uint64_t cnt, int family);
@@ -105,4 +104,4 @@ TmEcode LiveDeviceIfaceList(json_t *cmd, json_t *server_msg, void *data);
 TmEcode LiveDeviceGetBypassedStats(json_t *cmd, json_t *answer, void *data);
 #endif
 
-#endif /* __UTIL_DEVICE_H__ */
+#endif /* SURICATA_UTIL_DEVICE_H */

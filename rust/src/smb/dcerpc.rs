@@ -168,6 +168,8 @@ impl SMBState {
                 _ => { false },
             };
             if found {
+                tx.tx_data.updated_tc = true;
+                tx.tx_data.updated_ts = true;
                 return Some(tx);
             }
         }
@@ -455,10 +457,7 @@ pub fn smb_read_dcerpc_record(state: &mut SMBState,
     // msg_id 0 as this data crosses cmd/reply pairs
     let ehdr = SMBHashKeyHdrGuid::new(SMBCommonHdr::new(SMBHDR_TYPE_TRANS_FRAG,
             hdr.ssn_id, hdr.tree_id, 0_u64), guid.to_vec());
-    let mut prevdata = match state.ssnguid2vec_map.remove(&ehdr) {
-        Some(s) => s,
-        None => Vec::new(),
-    };
+    let mut prevdata = state.dcerpc_rec_frag_cache.pop(&ehdr).unwrap_or_default();
     SCLogDebug!("indata {} prevdata {}", indata.len(), prevdata.len());
     prevdata.extend_from_slice(indata);
     let data = prevdata;
@@ -479,7 +478,7 @@ pub fn smb_read_dcerpc_record(state: &mut SMBState,
                 if ntstatus == SMB_NTSTATUS_BUFFER_OVERFLOW && data.len() < dcer.frag_len as usize {
                     SCLogDebug!("short record {} < {}: storing partial data in state",
                             data.len(), dcer.frag_len);
-                    state.ssnguid2vec_map.insert(ehdr, data.to_vec());
+                    state.dcerpc_rec_frag_cache.put(ehdr, data.to_vec());
                     return true; // TODO review
                 }
 

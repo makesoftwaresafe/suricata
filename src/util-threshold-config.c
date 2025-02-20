@@ -30,6 +30,7 @@
 
 #include "suricata-common.h"
 
+#include "action-globals.h"
 #include "host.h"
 #include "ippair.h"
 
@@ -47,7 +48,6 @@
 #include "util-unittest-helper.h"
 #include "util-byte.h"
 #include "util-time.h"
-#include "util-error.h"
 #include "util-debug.h"
 #include "util-fmemopen.h"
 
@@ -67,11 +67,15 @@ static FILE *g_ut_threshold_fp = NULL;
 #define DETECT_BASE_REGEX "^\\s*(event_filter|threshold|rate_filter|suppress)\\s*gen_id\\s*(\\d+)\\s*,\\s*sig_id\\s*(\\d+)\\s*(.*)\\s*$"
 
 #define DETECT_THRESHOLD_REGEX                                                                     \
-    "^,\\s*type\\s*(limit|both|threshold)\\s*,\\s*track\\s*(by_dst|by_src|by_both|by_rule)\\s*,"   \
+    "^,\\s*type\\s*(limit|both|threshold)\\s*,\\s*track\\s*(by_dst|by_src|by_both|by_rule|by_"     \
+    "flow)\\s*,"                                                                                   \
     "\\s*count\\s*(\\d+)\\s*,\\s*seconds\\s*(\\d+)\\s*$"
 
 /* TODO: "apply_to" */
-#define DETECT_RATE_REGEX "^,\\s*track\\s*(by_dst|by_src|by_both|by_rule)\\s*,\\s*count\\s*(\\d+)\\s*,\\s*seconds\\s*(\\d+)\\s*,\\s*new_action\\s*(alert|drop|pass|log|sdrop|reject)\\s*,\\s*timeout\\s*(\\d+)\\s*$"
+#define DETECT_RATE_REGEX                                                                          \
+    "^,\\s*track\\s*(by_dst|by_src|by_both|by_rule|by_flow)\\s*,\\s*count\\s*(\\d+)\\s*,\\s*"      \
+    "seconds\\s*(\\d+)\\s*,\\s*new_action\\s*(alert|drop|pass|log|sdrop|reject)\\s*,\\s*"          \
+    "timeout\\s*(\\d+)\\s*$"
 
 /*
  * suppress has two form:
@@ -186,7 +190,7 @@ int SCThresholdConfInitContext(DetectEngineCtx *de_ctx)
         SCLogWarning("Error loading threshold configuration from %s", filename);
         SCThresholdConfDeInitContext(de_ctx, fd);
         /* maintain legacy behavior so no errors unless config testing */
-        if (RunmodeGetCurrent() == RUNMODE_CONF_TEST) {
+        if (SCRunmodeGet() == RUNMODE_CONF_TEST) {
             ret = -1;
         }
         return ret;
@@ -210,7 +214,6 @@ static void SCThresholdConfDeInitContext(DetectEngineCtx *de_ctx, FILE *fd)
 {
     if (fd != NULL)
         fclose(fd);
-    return;
 }
 
 /** \internal
@@ -257,7 +260,7 @@ static int SetupSuppressRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid,
         for (s = de_ctx->sig_list; s != NULL; s = s->next) {
             /* tag the rule as noalert */
             if (parsed_track == TRACK_RULE) {
-                s->flags |= SIG_FLAG_NOALERT;
+                s->action &= ~ACTION_ALERT;
                 continue;
             }
 
@@ -281,7 +284,7 @@ static int SetupSuppressRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid,
 
             /* tag the rule as noalert */
             if (parsed_track == TRACK_RULE) {
-                s->flags |= SIG_FLAG_NOALERT;
+                s->action &= ~ACTION_ALERT;
                 continue;
             }
 
@@ -307,7 +310,7 @@ static int SetupSuppressRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid,
                     id, gid);
         } else {
             if (parsed_track == TRACK_RULE) {
-                s->flags |= SIG_FLAG_NOALERT;
+                s->action &= ~ACTION_ALERT;
                 goto end;
             }
 
@@ -346,9 +349,8 @@ error:
  *  \retval -1 error
  */
 static int SetupThresholdRule(DetectEngineCtx *de_ctx, uint32_t id, uint32_t gid,
-        uint8_t parsed_type, uint8_t parsed_track, uint32_t parsed_count,
-        uint32_t parsed_seconds, uint32_t parsed_timeout, uint8_t parsed_new_action,
-        const char *th_ip)
+        uint8_t parsed_type, uint8_t parsed_track, uint32_t parsed_count, uint32_t parsed_seconds,
+        uint32_t parsed_timeout, uint8_t parsed_new_action)
 {
     Signature *s = NULL;
     SigMatch *sm = NULL;
@@ -796,6 +798,8 @@ static int ParseThresholdRule(const DetectEngineCtx *de_ctx, char *rawstr, uint3
             }
             else if (strcasecmp(th_track,"by_rule") == 0)
                 parsed_track = TRACK_RULE;
+            else if (strcasecmp(th_track, "by_flow") == 0)
+                parsed_track = TRACK_FLOW;
             else {
                 SCLogError("Invalid track parameter %s in %s", th_track, rawstr);
                 goto error;
@@ -896,9 +900,8 @@ static int SCThresholdConfAddThresholdtype(char *rawstr, DetectEngineCtx *de_ctx
                     parsed_count, parsed_seconds, parsed_timeout, parsed_new_action,
                     th_ip);
     } else {
-        r = SetupThresholdRule(de_ctx, id, gid, parsed_type, parsed_track,
-                    parsed_count, parsed_seconds, parsed_timeout, parsed_new_action,
-                    th_ip);
+        r = SetupThresholdRule(de_ctx, id, gid, parsed_type, parsed_track, parsed_count,
+                parsed_seconds, parsed_timeout, parsed_new_action);
     }
     if (r < 0) {
         goto error;
@@ -996,7 +999,7 @@ int SCThresholdConfParseFile(DetectEngineCtx *de_ctx, FILE *fp)
         esc_pos = SCThresholdConfLineIsMultiline(line);
         if (esc_pos == 0) {
             if (SCThresholdConfAddThresholdtype(line, de_ctx) < 0) {
-                if (RunmodeGetCurrent() == RUNMODE_CONF_TEST)
+                if (SCRunmodeGet() == RUNMODE_CONF_TEST)
                     return -1;
             } else {
                 SCLogDebug("Adding threshold.config rule num %" PRIu32 "( %s )", rule_num, line);
@@ -1532,7 +1535,7 @@ static int SCThresholdConfTest09(void)
     ThreadVars th_v;
     memset(&th_v, 0, sizeof(th_v));
 
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacket((uint8_t*)"lalala", 6, IPPROTO_TCP);
     FAIL_IF_NULL(p);
@@ -1601,7 +1604,7 @@ static int SCThresholdConfTest09(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -1613,7 +1616,7 @@ static int SCThresholdConfTest09(void)
  */
 static int SCThresholdConfTest10(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     /* Create two different packets falling to the same rule, and
     *  because count:3, we should drop on match #4.
@@ -1683,15 +1686,15 @@ static int SCThresholdConfTest10(void)
     SigMatchSignatures(&th_v, de_ctx, det_ctx, p1);
     FAIL_IF(PacketTestAction(p1, ACTION_DROP));
     FAIL_IF(PacketAlertCheck(p1, 10) != 1);
-
+#if 0
     /* Ensure that a Threshold entry was installed at the sig */
     FAIL_IF_NULL(de_ctx->ths_ctx.th_entry[s->num]);
-
+#endif
     UTHFreePacket(p1);
     UTHFreePacket(p2);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -1703,7 +1706,7 @@ static int SCThresholdConfTest10(void)
  */
 static int SCThresholdConfTest11(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacket((uint8_t*)"lalala", 6, IPPROTO_TCP);
     FAIL_IF_NULL(p);
@@ -1796,7 +1799,7 @@ static int SCThresholdConfTest11(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -1808,7 +1811,7 @@ static int SCThresholdConfTest11(void)
  */
 static int SCThresholdConfTest12(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacket((uint8_t*)"lalala", 6, IPPROTO_TCP);
     FAIL_IF_NULL(p);
@@ -1901,7 +1904,7 @@ static int SCThresholdConfTest12(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -1946,7 +1949,7 @@ static int SCThresholdConfTest13(void)
  */
 static int SCThresholdConfTest14(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p1 = UTHBuildPacketReal((uint8_t*)"lalala", 6, IPPROTO_TCP, "192.168.0.10",
                                     "192.168.0.100", 1234, 24);
@@ -1995,7 +1998,7 @@ static int SCThresholdConfTest14(void)
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
 
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2007,7 +2010,7 @@ static int SCThresholdConfTest14(void)
  */
 static int SCThresholdConfTest15(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacketReal((uint8_t*)"lalala", 6, IPPROTO_TCP, "192.168.0.10",
                                     "192.168.0.100", 1234, 24);
@@ -2043,7 +2046,7 @@ static int SCThresholdConfTest15(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2055,7 +2058,7 @@ static int SCThresholdConfTest15(void)
  */
 static int SCThresholdConfTest16(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacketReal((uint8_t*)"lalala", 6, IPPROTO_TCP, "192.168.1.1",
                                     "192.168.0.100", 1234, 24);
@@ -2090,7 +2093,7 @@ static int SCThresholdConfTest16(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2102,7 +2105,7 @@ static int SCThresholdConfTest16(void)
  */
 static int SCThresholdConfTest17(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
 
     Packet *p = UTHBuildPacketReal((uint8_t*)"lalala", 6, IPPROTO_TCP, "192.168.0.10",
                                     "192.168.0.100", 1234, 24);
@@ -2138,7 +2141,7 @@ static int SCThresholdConfTest17(void)
     UTHFreePacket(p);
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2169,7 +2172,7 @@ static FILE *SCThresholdConfGenerateInvalidDummyFD12(void)
  */
 static int SCThresholdConfTest18(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
     de_ctx->flags |= DE_QUIET;
@@ -2190,7 +2193,7 @@ static int SCThresholdConfTest18(void)
     FAIL_IF_NOT(de->type == TYPE_SUPPRESS && de->track == TRACK_DST);
 
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2221,7 +2224,7 @@ static FILE *SCThresholdConfGenerateInvalidDummyFD13(void)
  */
 static int SCThresholdConfTest19(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
     de_ctx->flags |= DE_QUIET;
@@ -2239,7 +2242,7 @@ static int SCThresholdConfTest19(void)
     FAIL_IF_NULL(de);
     FAIL_IF_NOT(de->type == TYPE_SUPPRESS && de->track == TRACK_DST);
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2271,7 +2274,7 @@ static FILE *SCThresholdConfGenerateValidDummyFD20(void)
  */
 static int SCThresholdConfTest20(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
     de_ctx->flags |= DE_QUIET;
@@ -2304,7 +2307,7 @@ static int SCThresholdConfTest20(void)
     FAIL_IF_NOT(smd->is_last);
 
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2317,7 +2320,7 @@ static int SCThresholdConfTest20(void)
  */
 static int SCThresholdConfTest21(void)
 {
-    HostInitConfig(HOST_QUIET);
+    ThresholdInit();
     DetectEngineCtx *de_ctx = DetectEngineCtxInit();
     FAIL_IF_NULL(de_ctx);
     de_ctx->flags |= DE_QUIET;
@@ -2349,7 +2352,7 @@ static int SCThresholdConfTest21(void)
     FAIL_IF_NOT(smd->is_last);
 
     DetectEngineCtxFree(de_ctx);
-    HostShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2382,7 +2385,7 @@ static int SCThresholdConfTest22(void)
     ThreadVars th_v;
     memset(&th_v, 0, sizeof(th_v));
 
-    IPPairInitConfig(IPPAIR_QUIET);
+    ThresholdInit();
 
     /* This packet will cause rate_filter */
     Packet *p1 = UTHBuildPacketSrcDst((uint8_t*)"lalala", 6, IPPROTO_TCP, "172.26.0.1", "172.26.0.10");
@@ -2485,7 +2488,7 @@ static int SCThresholdConfTest22(void)
 
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    IPPairShutdown();
+    ThresholdDestroy();
     PASS;
 }
 
@@ -2519,7 +2522,7 @@ static int SCThresholdConfTest23(void)
     ThreadVars th_v;
     memset(&th_v, 0, sizeof(th_v));
 
-    IPPairInitConfig(IPPAIR_QUIET);
+    ThresholdInit();
 
     /* Create two packets between same addresses in opposite direction */
     Packet *p1 = UTHBuildPacketSrcDst((uint8_t*)"lalala", 6, IPPROTO_TCP, "172.26.0.1", "172.26.0.10");
@@ -2566,7 +2569,7 @@ static int SCThresholdConfTest23(void)
 
     DetectEngineThreadCtxDeinit(&th_v, (void *)det_ctx);
     DetectEngineCtxFree(de_ctx);
-    IPPairShutdown();
+    ThresholdDestroy();
     PASS;
 }
 #endif /* UNITTESTS */

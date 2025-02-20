@@ -70,7 +70,7 @@ static InspectionBuffer *GetSshData(DetectEngineThreadCtx *det_ctx,
         const uint8_t *hasshServer = NULL;
         uint32_t b_len = 0;
 
-        if (rs_ssh_tx_get_hassh(txv, &hasshServer, &b_len, flow_flags) != 1)
+        if (SCSshTxGetHassh(txv, &hasshServer, &b_len, flow_flags) != 1)
             return NULL;
         if (hasshServer == NULL || b_len == 0) {
             SCLogDebug("SSH hassh not set");
@@ -104,11 +104,11 @@ static int DetectSshHasshServerSetup(DetectEngineCtx *de_ctx, Signature *s, cons
         return -1;
             
     /* try to enable Hassh */
-    rs_ssh_enable_hassh();
+    SCSshEnableHassh();
 
     /* Check if Hassh is disabled */
-    if (!RunmodeIsUnittests() && !rs_ssh_hassh_is_enabled()) {
-        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_AL_SSH_HASSH_SERVER)) {
+    if (!RunmodeIsUnittests() && !SCSshHasshIsEnabled()) {
+        if (!SigMatchSilentErrorEnabled(de_ctx, DETECT_SSH_HASSH_SERVER)) {
             SCLogError("hassh support is not enabled");
         }
         return -2;
@@ -190,12 +190,12 @@ static void DetectSshHasshServerHashSetupCallback(const DetectEngineCtx *de_ctx,
  */
 void DetectSshHasshServerRegister(void) 
 {
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].name = KEYWORD_NAME;
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].alias = KEYWORD_ALIAS;
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].desc = BUFFER_NAME " sticky buffer";
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].url = "/rules/" KEYWORD_DOC;
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].Setup = DetectSshHasshServerSetup;
-    sigmatch_table[DETECT_AL_SSH_HASSH_SERVER].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].name = KEYWORD_NAME;
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].alias = KEYWORD_ALIAS;
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].desc = BUFFER_NAME " sticky buffer";
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].url = "/rules/" KEYWORD_DOC;
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].Setup = DetectSshHasshServerSetup;
+    sigmatch_table[DETECT_SSH_HASSH_SERVER].flags |= SIGMATCH_INFO_STICKY_BUFFER | SIGMATCH_NOOPT;
 
     DetectAppLayerMpmRegister(BUFFER_NAME, SIG_FLAG_TOCLIENT, 2, PrefilterGenericMpmRegister,
             GetSshData, ALPROTO_SSH, SshStateBannerDone);

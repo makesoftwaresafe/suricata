@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2022 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,8 +21,8 @@
  * \author Endace Technology Limited, Jason Ish <jason.ish@endace.com>
  */
 
-#ifndef __OUTPUT_H__
-#define __OUTPUT_H__
+#ifndef SURICATA_OUTPUT_H
+#define SURICATA_OUTPUT_H
 
 #include "decode.h"
 #include "tm-modules.h"
@@ -63,19 +63,18 @@ typedef struct OutputModule_ {
 
     ThreadInitFunc ThreadInit;
     ThreadDeinitFunc ThreadDeinit;
-    ThreadExitPrintStatsFunc ThreadExitPrintStats;
 
     PacketLogger PacketLogFunc;
     PacketLogCondition PacketConditionFunc;
     TxLogger TxLogFunc;
     TxLoggerCondition TxLogCondition;
-    FileLogger FileLogFunc;
-    FiledataLogger FiledataLogFunc;
+    SCFileLogger FileLogFunc;
+    SCFiledataLogger FiledataLogFunc;
     FlowLogger FlowLogFunc;
-    StreamingLogger StreamingLogFunc;
+    SCStreamingLogger StreamingLogFunc;
     StatsLogger StatsLogFunc;
     AppProto alproto;
-    enum OutputStreamingType stream_type;
+    enum SCOutputStreamingType stream_type;
     int tc_log_progress;
     int ts_log_progress;
 
@@ -87,102 +86,58 @@ extern OutputModuleList output_modules;
 
 void OutputRegisterModule(const char *, const char *, OutputInitFunc);
 
-void OutputRegisterPacketModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc, PacketLogger LogFunc,
-    PacketLogCondition ConditionFunc, ThreadInitFunc, ThreadDeinitFunc,
-    ThreadExitPrintStatsFunc);
-void OutputRegisterPacketSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name, OutputInitSubFunc InitFunc,
-    PacketLogger LogFunc, PacketLogCondition ConditionFunc,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterPacketModule(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, PacketLogger LogFunc, PacketLogCondition ConditionFunc,
+        ThreadInitFunc, ThreadDeinitFunc);
+void OutputRegisterPacketSubModule(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, PacketLogger LogFunc,
+        PacketLogCondition ConditionFunc, ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterTxModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc, AppProto alproto,
-    TxLogger TxLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterTxSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterTxModule(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, AppProto alproto, TxLogger TxLogFunc, ThreadInitFunc ThreadInit,
+        ThreadDeinitFunc ThreadDeinit);
+void OutputRegisterTxSubModule(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
+        ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterTxModuleWithCondition(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc, AppProto alproto,
-    TxLogger TxLogFunc, TxLoggerCondition TxLogCondition,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterTxSubModuleWithCondition(LoggerId id,
-    const char *parent_name, const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc, AppProto alproto,
-    TxLogger TxLogFunc, TxLoggerCondition TxLogCondition,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterTxModuleWithCondition(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
+        TxLoggerCondition TxLogCondition, ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
+void OutputRegisterTxSubModuleWithCondition(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
+        TxLoggerCondition TxLogCondition, ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterTxModuleWithProgress(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc, AppProto alproto,
-    TxLogger TxLogFunc, int tc_log_progress, int ts_log_progress,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterTxSubModuleWithProgress(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
-    int tc_log_progress, int ts_log_progress, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterTxModuleWithProgress(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, AppProto alproto, TxLogger TxLogFunc, int tc_log_progress,
+        int ts_log_progress, ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
+void OutputRegisterTxSubModuleWithProgress(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, AppProto alproto, TxLogger TxLogFunc,
+        int tc_log_progress, int ts_log_progress, ThreadInitFunc ThreadInit,
+        ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterFileModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc,
-    FileLogger FileLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterFileSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc, FileLogger FileLogFunc,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterFileSubModule(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, SCFileLogger FileLogFunc,
+        ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterFiledataModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc,
-    FiledataLogger FiledataLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterFiledataSubModule(LoggerId, const char *parent_name,
-    const char *name, const char *conf_name, OutputInitSubFunc InitFunc,
-    FiledataLogger FiledataLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterFiledataModule(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, SCFiledataLogger FiledataLogFunc, ThreadInitFunc ThreadInit,
+        ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterFlowSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name, OutputInitSubFunc InitFunc,
-    FlowLogger FlowLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterFlowSubModule(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, FlowLogger FlowLogFunc,
+        ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterStreamingModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc,
-    StreamingLogger StreamingLogFunc, enum OutputStreamingType stream_type,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterStreamingSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc, StreamingLogger StreamingLogFunc,
-    enum OutputStreamingType stream_type,
-    ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterStreamingModule(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, SCStreamingLogger StreamingLogFunc,
+        enum SCOutputStreamingType stream_type, ThreadInitFunc ThreadInit,
+        ThreadDeinitFunc ThreadDeinit);
 
-void OutputRegisterStatsModule(LoggerId id, const char *name,
-    const char *conf_name, OutputInitFunc InitFunc,
-    StatsLogger StatsLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
-void OutputRegisterStatsSubModule(LoggerId id, const char *parent_name,
-    const char *name, const char *conf_name,
-    OutputInitSubFunc InitFunc,
-    StatsLogger StatsLogFunc, ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+void OutputRegisterStatsModule(LoggerId id, const char *name, const char *conf_name,
+        OutputInitFunc InitFunc, StatsLogger StatsLogFunc, ThreadInitFunc ThreadInit,
+        ThreadDeinitFunc ThreadDeinit);
+void OutputRegisterStatsSubModule(LoggerId id, const char *parent_name, const char *name,
+        const char *conf_name, OutputInitSubFunc InitFunc, StatsLogger StatsLogFunc,
+        ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
 OutputModule *OutputGetModuleByConfName(const char *name);
 void OutputDeregisterAll(void);
@@ -194,10 +149,8 @@ void OutputRegisterFileRotationFlag(int *flag);
 void OutputUnregisterFileRotationFlag(int *flag);
 void OutputNotifyFileRotation(void);
 
-void OutputRegisterRootLogger(ThreadInitFunc ThreadInit,
-    ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats,
-    OutputLogFunc LogFunc, OutputGetActiveCountFunc ActiveCntFunc);
+void OutputRegisterRootLogger(ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
+        OutputLogFunc LogFunc, OutputGetActiveCountFunc ActiveCntFunc);
 void TmModuleLoggerRegister(void);
 
 TmEcode OutputLoggerLog(ThreadVars *, Packet *, void *);
@@ -211,10 +164,19 @@ void OutputClearActiveLoggers(void);
 typedef bool (*EveJsonSimpleTxLogFunc)(void *, struct JsonBuilder *);
 
 typedef struct EveJsonSimpleAppLayerLogger {
-    AppProto proto;
     EveJsonSimpleTxLogFunc LogTx;
+    const char *name;
 } EveJsonSimpleAppLayerLogger;
 
 EveJsonSimpleAppLayerLogger *SCEveJsonSimpleGetLogger(AppProto alproto);
 
-#endif /* ! __OUTPUT_H__ */
+typedef struct EveJsonTxLoggerRegistrationData {
+    const char *confname;
+    const char *logname;
+    AppProto alproto;
+    EveJsonSimpleTxLogFunc LogTx;
+} EveJsonTxLoggerRegistrationData;
+
+int OutputPreRegisterLogger(EveJsonTxLoggerRegistrationData reg_data);
+
+#endif /* ! SURICATA_OUTPUT_H */

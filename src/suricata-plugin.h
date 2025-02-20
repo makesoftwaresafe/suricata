@@ -15,13 +15,13 @@
  * 02110-1301, USA.
  */
 
-#ifndef __SURICATA_PLUGIN_H__
-#define __SURICATA_PLUGIN_H__
+#ifndef SURICATA_SURICATA_PLUGIN_H
+#define SURICATA_SURICATA_PLUGIN_H
 
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "conf.h"
+#include "queue.h"
 
 /**
  * The size of the data chunk inside each packet structure a plugin
@@ -41,28 +41,6 @@ typedef struct SCPlugin_ {
 
 typedef SCPlugin *(*SCPluginRegisterFunc)(void);
 
-/**
- * Structure used to define an Eve output file type plugin.
- */
-typedef struct SCEveFileType_ {
-    /* The name of the output, used to specify the output in the filetype section
-     * of the eve-log configuration. */
-    const char *name;
-    /* Init Called on first access */
-    int (*Init)(ConfNode *conf, bool threaded, void **init_data);
-    /* Write - Called on each write to the object */
-    int (*Write)(const char *buffer, int buffer_len, void *init_data, void *thread_data);
-    /* Close - Called on final close */
-    void (*Deinit)(void *init_data);
-    /* ThreadInit - Called for each thread using file object*/
-    int (*ThreadInit)(void *init_data, int thread_id, void **thread_data);
-    /* ThreadDeinit - Called for each thread using file object */
-    int (*ThreadDeinit)(void *init_data, void *thread_data);
-    TAILQ_ENTRY(SCEveFileType_) entries;
-} SCEveFileType;
-
-bool SCRegisterEveFileType(SCEveFileType *);
-
 typedef struct SCCapturePlugin_ {
     char *name;
     void (*Init)(const char *args, int plugin_slot, int receive_slot, int decode_slot);
@@ -73,5 +51,21 @@ typedef struct SCCapturePlugin_ {
 } SCCapturePlugin;
 
 int SCPluginRegisterCapture(SCCapturePlugin *);
+
+// Every change in the API used by plugins should change this number
+#define SC_PLUGIN_API_VERSION 8
+
+typedef struct SCAppLayerPlugin_ {
+    // versioning to check suricata/plugin API compatibility
+    uint64_t version;
+    char *name;
+    void (*Register)(void);
+    void (*KeywordsRegister)(void);
+    char *logname;
+    char *confname;
+    bool (*Logger)(void *tx, void *jb);
+} SCAppLayerPlugin;
+
+int SCPluginRegisterAppLayer(SCAppLayerPlugin *);
 
 #endif /* __SURICATA_PLUGIN_H */

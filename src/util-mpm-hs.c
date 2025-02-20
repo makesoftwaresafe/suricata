@@ -1001,7 +1001,6 @@ int SCHSAddPatternCS(MpmCtx *mpm_ctx, uint8_t *pat, uint16_t patlen,
 
 void SCHSPrintSearchStats(MpmThreadCtx *mpm_thread_ctx)
 {
-    return;
 }
 
 void SCHSPrintInfo(MpmCtx *mpm_ctx)
@@ -1055,6 +1054,7 @@ void MpmHSRegister(void)
 #ifdef UNITTESTS
     mpm_table[MPM_HS].RegisterUnittests = SCHSRegisterTests;
 #endif
+    mpm_table[MPM_HS].feature_flags = MPM_FEATURE_FLAG_DEPTH | MPM_FEATURE_FLAG_OFFSET;
     /* Set Hyperscan memory allocators */
     SCHSSetAllocators();
 }

@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DATASETS_STRING_H__
-#define __DATASETS_STRING_H__
+#ifndef SURICATA_DATASETS_STRING_H
+#define SURICATA_DATASETS_STRING_H
 
 #include "datasets-reputation.h"
 
@@ -34,8 +34,9 @@ typedef struct StringType {
 
 int StringSet(void *dst, void *src);
 bool StringCompare(void *a, void *b);
-uint32_t StringHash(void *s);
+uint32_t StringHash(uint32_t hash_seed, void *s);
+uint32_t StringGetLength(void *s);
 void StringFree(void *s);
 int StringAsBase64(const void *s, char *out, size_t out_size);
 
-#endif /* __DATASETS_STRING_H__ */
+#endif /* SURICATA_DATASETS_STRING_H */

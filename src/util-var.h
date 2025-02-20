@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2010 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,9 +21,10 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __UTIL_VAR_H__
-#define __UTIL_VAR_H__
+#ifndef SURICATA_UTIL_VAR_H
+#define SURICATA_UTIL_VAR_H
 
+/** variable types: these are used to track variable names */
 enum VarTypes {
     VAR_TYPE_NOT_SET,
 
@@ -45,8 +46,9 @@ enum VarTypes {
     VAR_TYPE_IPPAIR_VAR,
 };
 
+/** \todo see ticket #6855. The type field should be 16 bits. */
 typedef struct GenericVar_ {
-    uint8_t type;
+    uint8_t type; /**< variable type, uses detection sm_type */
     uint8_t pad[3];
     uint32_t idx;
     struct GenericVar_ *next;
@@ -78,5 +80,4 @@ void GenericVarRemove(GenericVar **, GenericVar *);
 int AddVariableToResolveList(ResolvedVariablesList *list, const char *var);
 void CleanVariableResolveList(ResolvedVariablesList *var_list);
 
-#endif /* __UTIL_VAR_H__ */
-
+#endif /* SURICATA_UTIL_VAR_H */

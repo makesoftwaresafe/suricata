@@ -37,10 +37,6 @@
 #endif
 #endif
 
-#if HAVE_LIBSYSTEMD
-#include <systemd/sd-daemon.h>
-#endif
-
 #include "suricata.h"
 
 #include "conf.h"
@@ -97,10 +93,8 @@
 #include "source-pcap.h"
 #include "source-pcap-file.h"
 #include "source-pcap-file-helper.h"
-#include "source-pfring.h"
 #include "source-erf-file.h"
 #include "source-erf-dag.h"
-#include "source-napatech.h"
 #include "source-af-packet.h"
 #include "source-af-xdp.h"
 #include "source-netmap.h"
@@ -127,9 +121,9 @@
 #include "util-ebpf.h"
 #include "util-exception-policy.h"
 #include "util-host-os-info.h"
+#include "util-hugepages.h"
 #include "util-ioctl.h"
 #include "util-landlock.h"
-#include "util-luajit.h"
 #include "util-macset.h"
 #include "util-misc.h"
 #include "util-mpm-hs.h"
@@ -144,6 +138,9 @@
 #include "util-time.h"
 #include "util-validate.h"
 #include "util-var-name.h"
+#ifdef SYSTEMD_NOTIFY
+#include "util-systemd.h"
+#endif
 
 #ifdef WINDIVERT
 #include "decode-sll.h"
@@ -171,9 +168,6 @@ SC_ATOMIC_DECLARE(unsigned int, engine_stage);
 /** suricata engine control flags */
 volatile uint8_t suricata_ctl_flags = 0;
 
-/** Run mode selected */
-int run_mode = RUNMODE_UNKNOWN;
-
 /** Engine mode: inline (ENGINE_MODE_IPS) or just
   * detection mode (ENGINE_MODE_IDS by default) */
 static enum EngineMode g_engine_mode = ENGINE_MODE_UNKNOWN;
@@ -183,7 +177,7 @@ static enum EngineMode g_engine_mode = ENGINE_MODE_UNKNOWN;
 uint8_t host_mode = SURI_HOST_IS_SNIFFER_ONLY;
 
 /** Maximum packets to simultaneously process. */
-uint16_t max_pending_packets;
+uint32_t max_pending_packets;
 
 /** global indicating if detection is enabled */
 int g_detect_disabled = 0;
@@ -208,9 +202,19 @@ uint16_t g_vlan_mask = 0xffff;
  * comparing flows */
 uint16_t g_livedev_mask = 0xffff;
 
+/** determine (without branching) if we include the recursion levels when hashing or
+ * comparing flows */
+uint8_t g_recurlvl_mask = 0xff;
+
 /* flag to disable hashing almost globally, to be similar to disabling nss
  * support */
 bool g_disable_hashing = false;
+
+/* snapshot of the system's hugepages before system intitialization. */
+SystemHugepageSnapshot *prerun_snap = NULL;
+
+/** add per-proto app-layer error counters for exception policies stats? disabled by default */
+bool g_stats_eps_per_app_proto_errors = false;
 
 /** Suricata instance */
 SCInstance suricata;
@@ -250,16 +254,21 @@ void EngineModeSetIDS(void)
 #ifdef UNITTESTS
 int RunmodeIsUnittests(void)
 {
-    if (run_mode == RUNMODE_UNITTEST)
+    if (suricata.run_mode == RUNMODE_UNITTEST)
         return 1;
 
     return 0;
 }
 #endif
 
-int RunmodeGetCurrent(void)
+int SCRunmodeGet(void)
 {
-    return run_mode;
+    return suricata.run_mode;
+}
+
+void SCRunmodeSet(int run_mode)
+{
+    suricata.run_mode = run_mode;
 }
 
 /** signal handlers
@@ -356,11 +365,12 @@ void GlobalsInitPreConfig(void)
     SupportFastPatternForSigMatchTypes();
     SCThresholdConfGlobalInit();
     SCProtoNameInit();
-    FrameConfigInit();
 }
 
-static void GlobalsDestroy(SCInstance *suri)
+void GlobalsDestroy(void)
 {
+    SCInstance *suri = &suricata;
+    ThresholdDestroy();
     HostShutdown();
     HTPFreeConfig();
     HTPAtExitPrintStats();
@@ -378,6 +388,7 @@ static void GlobalsDestroy(SCInstance *suri)
     AppLayerDeSetup();
     DatasetsSave();
     DatasetsDestroy();
+    OutputTxShutdown();
     TagDestroyCtx();
 
     LiveDeviceListClean();
@@ -385,6 +396,7 @@ static void GlobalsDestroy(SCInstance *suri)
     FeatureTrackingRelease();
     SCProtoNameRelease();
     TimeDeinit();
+    SigTableCleanup();
     TmqhCleanup();
     TmModuleRunDeInit();
     ParseSizeDeinit();
@@ -406,9 +418,7 @@ static void GlobalsDestroy(SCInstance *suri)
 #endif
 
     ConfDeInit();
-#ifdef HAVE_LUAJIT
-    LuajitFreeStatesPool();
-#endif
+
     DetectParseFreeRegexes();
 
     SCPidfileRemove(suri->pid_filename);
@@ -426,12 +436,9 @@ static void GlobalsDestroy(SCInstance *suri)
  */
 static void OnNotifyRunning(void)
 {
-#if HAVE_LIBSYSTEMD
-    if (sd_notify(0, "READY=1") < 0) {
+#ifdef SYSTEMD_NOTIFY
+    if (SystemDNotifyReady() < 0) {
         SCLogWarning("failed to notify systemd");
-        /* Please refer to:
-         * https://www.freedesktop.org/software/systemd/man/sd_notify.html#Return%20Value
-         * for discussion on why failure should not be considered an error */
     }
 #endif
 }
@@ -501,7 +508,7 @@ static void SetBpfStringFromFile(char *filename)
     char *bpf_filter = NULL;
     char *bpf_comment_tmp = NULL;
     char *bpf_comment_start =  NULL;
-    uint32_t bpf_len = 0;
+    size_t bpf_len = 0;
     SCStat st;
     FILE *fp = NULL;
     size_t nm = 0;
@@ -516,7 +523,8 @@ static void SetBpfStringFromFile(char *filename)
         SCLogError("Failed to stat file %s", filename);
         exit(EXIT_FAILURE);
     }
-    bpf_len = st.st_size + 1;
+    // st.st_size is signed on Windows
+    bpf_len = ((size_t)(st.st_size)) + 1;
 
     bpf_filter = SCCalloc(1, bpf_len);
     if (unlikely(bpf_filter == NULL)) {
@@ -626,6 +634,7 @@ static void PrintUsage(const char *progname)
     printf("\t--pcap-file-continuous               : when running in pcap mode with a directory, continue checking directory for pcaps until interrupted\n");
     printf("\t--pcap-file-delete                   : when running in replay mode (-r with directory or file), will delete pcap files that have been processed when done\n");
     printf("\t--pcap-file-recursive                : will descend into subdirectories when running in replay mode (-r)\n");
+    printf("\t--pcap-file-buffer-size              : set read buffer size (setvbuf)\n");
 #ifdef HAVE_PCAP_SET_BUFF
     printf("\t--pcap-buffer-size                   : size of the pcap buffer value from 0 - %i\n",INT_MAX);
 #endif /* HAVE_SET_PCAP_BUFF */
@@ -657,9 +666,6 @@ static void PrintUsage(const char *progname)
     printf("\t--erf-in <path>                      : process an ERF file\n");
 #ifdef HAVE_DAG
     printf("\t--dag <dagX:Y>                       : process ERF records from DAG interface X, stream Y\n");
-#endif
-#ifdef HAVE_NAPATECH
-    printf("\t--napatech                           : run Napatech Streams using the API\n");
 #endif
 #ifdef BUILD_UNIX_SOCKET
     printf("\t--unix-socket[=<file>]               : use unix socket to control suricata work\n");
@@ -709,6 +715,9 @@ static void PrintBuildInfo(void)
 #ifdef HAVE_PFRING
     strlcat(features, "PF_RING ", sizeof(features));
 #endif
+#ifdef HAVE_NAPATECH
+    strlcat(features, "NAPATECH ", sizeof(features));
+#endif
 #ifdef HAVE_AF_PACKET
     strlcat(features, "AF_PACKET ", sizeof(features));
 #endif
@@ -737,11 +746,13 @@ static void PrintBuildInfo(void)
     strlcat(features, "HAVE_NSS ", sizeof(features));
     /* HTTP2_DECOMPRESSION is not an optional feature in this major version */
     strlcat(features, "HTTP2_DECOMPRESSION ", sizeof(features));
-#ifdef HAVE_LUA
+    /* Lua is now vendored in and always available. */
     strlcat(features, "HAVE_LUA ", sizeof(features));
+#ifdef HAVE_JA3
+    strlcat(features, "HAVE_JA3 ", sizeof(features));
 #endif
-#ifdef HAVE_LUAJIT
-    strlcat(features, "HAVE_LUAJIT ", sizeof(features));
+#ifdef HAVE_JA4
+    strlcat(features, "HAVE_JA4 ", sizeof(features));
 #endif
     strlcat(features, "HAVE_LIBJANSSON ", sizeof(features));
 #ifdef PROFILING
@@ -765,6 +776,9 @@ static void PrintBuildInfo(void)
 #if defined(SC_ADDRESS_SANITIZER)
     strlcat(features, "ASAN ", sizeof(features));
 #endif
+#if defined(HAVE_POPCNT64)
+    strlcat(features, "POPCNT64 ", sizeof(features));
+#endif
     if (strlen(features) == 0) {
         strlcat(features, "none", sizeof(features));
     }
@@ -781,6 +795,9 @@ static void PrintBuildInfo(void)
 #endif
 #if defined(__SSE3__)
     strlcat(features, "SSE_3 ", sizeof(features));
+#endif
+#if defined(__SSE2__)
+    strlcat(features, "SSE_2 ", sizeof(features));
 #endif
     if (strlen(features) == 0) {
         strlcat(features, "none", sizeof(features));
@@ -878,9 +895,6 @@ int g_ut_covered;
 
 void RegisterAllModules(void)
 {
-    // zero all module storage
-    memset(tmm_modules, 0, TMM_SIZE * sizeof(TmModule));
-
     /* commanders */
     TmModuleUnixManagerRegister();
     /* managers */
@@ -910,18 +924,12 @@ void RegisterAllModules(void)
     /* netmap */
     TmModuleReceiveNetmapRegister();
     TmModuleDecodeNetmapRegister();
-    /* pfring */
-    TmModuleReceivePfringRegister();
-    TmModuleDecodePfringRegister();
     /* dag file */
     TmModuleReceiveErfFileRegister();
     TmModuleDecodeErfFileRegister();
     /* dag live */
     TmModuleReceiveErfDagRegister();
     TmModuleDecodeErfDagRegister();
-    /* napatech */
-    TmModuleNapatechStreamRegister();
-    TmModuleNapatechDecodeRegister();
 
     /* flow worker */
     TmModuleFlowWorkerRegister();
@@ -947,9 +955,11 @@ void RegisterAllModules(void)
     TmModuleDecodeDPDKRegister();
 }
 
-static TmEcode LoadYamlConfig(SCInstance *suri)
+TmEcode SCLoadYamlConfig(void)
 {
     SCEnter();
+
+    SCInstance *suri = &suricata;
 
     if (suri->conf_filename == NULL)
         suri->conf_filename = DEFAULT_CONF_FILE;
@@ -982,17 +992,15 @@ static TmEcode ParseInterfacesList(const int runmode, char *pcap_dev)
                 SCReturnInt(TM_ECODE_FAILED);
             }
         }
-    } else if (runmode == RUNMODE_PFRING) {
-        /* FIXME add backward compat support */
-        /* iface has been set on command line */
-        if (strlen(pcap_dev)) {
-            if (ConfSetFinal("pfring.live-interface", pcap_dev) != 1) {
-                SCLogError("Failed to set pfring.live-interface");
-                SCReturnInt(TM_ECODE_FAILED);
+    } else if (runmode == RUNMODE_PLUGIN) {
+        if (strcmp(suricata.capture_plugin_name, "pfring") == 0) {
+            /* Special handling for pfring. */
+            if (strlen(pcap_dev)) {
+                if (ConfSetFinal("pfring.live-interface", pcap_dev) != 1) {
+                    SCLogError("Failed to set pfring.live-interface");
+                    SCReturnInt(TM_ECODE_FAILED);
+                }
             }
-        } else {
-            /* not an error condition if we have a 1.0 config */
-            LiveBuildDeviceList("pfring");
         }
 #ifdef HAVE_DPDK
     } else if (runmode == RUNMODE_DPDK) {
@@ -1304,8 +1312,9 @@ static bool IsLogDirectoryWritable(const char* str)
 
 extern int g_skip_prefilter;
 
-static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
+TmEcode SCParseCommandLine(int argc, char **argv)
 {
+    SCInstance *suri = &suricata;
     int opt;
 
     int dump_config = 0;
@@ -1343,6 +1352,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"pcap-file-continuous", 0, 0, 0},
         {"pcap-file-delete", 0, 0, 0},
         {"pcap-file-recursive", 0, 0, 0},
+        {"pcap-file-buffer-size", required_argument, 0, 0},
         {"simulate-ips", 0, 0 , 0},
         {"no-random", 0, &g_disable_randomness, 1},
         {"strict-rule-keywords", optional_argument, 0, 0},
@@ -1376,7 +1386,6 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
         {"group", required_argument, 0, 0},
         {"erf-in", required_argument, 0, 0},
         {"dag", required_argument, 0, 0},
-        {"napatech", 0, 0, 0},
         {"build-info", 0, &build_info, 1},
         {"data-dir", required_argument, 0, 0},
 #ifdef WINDIVERT
@@ -1418,7 +1427,9 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
             if (strcmp((long_opts[option_index]).name , "pfring") == 0 ||
                 strcmp((long_opts[option_index]).name , "pfring-int") == 0) {
 #ifdef HAVE_PFRING
-                suri->run_mode = RUNMODE_PFRING;
+                /* TODO: Which plugin? */
+                suri->run_mode = RUNMODE_PLUGIN;
+                suri->capture_plugin_name = "pfring";
                 if (optarg != NULL) {
                     memset(suri->pcap_dev, 0, sizeof(suri->pcap_dev));
                     strlcpy(suri->pcap_dev, optarg,
@@ -1559,7 +1570,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 return TM_ECODE_OK;
             } else if (strcmp((long_opts[option_index]).name, "list-keywords") == 0) {
                 if (optarg) {
-                    if (strcmp("short",optarg)) {
+                    if (strcmp("short", optarg) != 0) {
                         suri->keyword_info = optarg;
                     }
                 }
@@ -1593,6 +1604,8 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 g_detect_disabled = suri->disabled_detect = 1;
             } else if (strcmp((long_opts[option_index]).name, "disable-hashing") == 0) {
                 g_disable_hashing = true;
+                // for rust
+                SCDisableHashing();
             } else if (strcmp((long_opts[option_index]).name, "fatal-unittests") == 0) {
 #ifdef UNITTESTS
                 unittests_fatal = 1;
@@ -1643,7 +1656,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
 #endif /* HAVE_DAG */
             } else if (strcmp((long_opts[option_index]).name, "napatech") == 0) {
 #ifdef HAVE_NAPATECH
-                suri->run_mode = RUNMODE_NAPATECH;
+                suri->run_mode = RUNMODE_PLUGIN;
 #else
                 SCLogError("libntapi and a Napatech adapter are required"
                            " to capture packets using --napatech.");
@@ -1745,8 +1758,12 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                     SCLogError("failed to set pcap-file.recursive");
                     return TM_ECODE_FAILED;
                 }
-            }
-            else if (strcmp((long_opts[option_index]).name, "data-dir") == 0) {
+            } else if (strcmp((long_opts[option_index]).name, "pcap-file-buffer-size") == 0) {
+                if (ConfSetFinal("pcap-file.buffer-size", optarg) != 1) {
+                    SCLogError("failed to set pcap-file.buffer-size");
+                    return TM_ECODE_FAILED;
+                }
+            } else if (strcmp((long_opts[option_index]).name, "data-dir") == 0) {
                 if (optarg == NULL) {
                     SCLogError("no option argument (optarg) for -d");
                     return TM_ECODE_FAILED;
@@ -1764,7 +1781,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                     return TM_ECODE_FAILED;
                 }
                 suri->set_datadir = true;
-            } else if (strcmp((long_opts[option_index]).name , "strict-rule-keywords") == 0){
+            } else if (strcmp((long_opts[option_index]).name, "strict-rule-keywords") == 0) {
                 if (optarg == NULL) {
                     suri->strict_rule_parsing_string = SCStrdup("all");
                 } else {
@@ -1835,29 +1852,19 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
                 return TM_ECODE_FAILED;
             }
 #else /* not afpacket */
-            /* warn user if netmap or pf-ring are available */
-#if defined HAVE_PFRING || HAVE_NETMAP
+            /* warn user if netmap is available */
+#if defined HAVE_NETMAP
             int i = 0;
-#ifdef HAVE_PFRING
-            i++;
-#endif
 #ifdef HAVE_NETMAP
             i++;
 #endif
             SCLogWarning("faster capture "
                          "option%s %s available:"
-#ifdef HAVE_PFRING
-                         " PF_RING (--pfring-int=%s)"
-#endif
 #ifdef HAVE_NETMAP
                          " NETMAP (--netmap=%s)"
 #endif
                          ". Use --pcap=%s to suppress this warning",
                     i == 1 ? "" : "s", i == 1 ? "is" : "are"
-#ifdef HAVE_PFRING
-                    ,
-                    optarg
-#endif
 #ifdef HAVE_NETMAP
                     ,
                     optarg
@@ -2069,7 +2076,7 @@ static TmEcode ParseCommandLine(int argc, char** argv, SCInstance *suri)
 }
 
 #ifdef OS_WIN32
-static int WindowsInitService(int argc, char **argv)
+int WindowsInitService(int argc, char **argv)
 {
     if (SCRunningAsService()) {
         char path[MAX_PATH];
@@ -2207,7 +2214,6 @@ static int InitSignalHandler(SCInstance *suri)
  * Will be run once per pcap in unix-socket mode */
 void PreRunInit(const int runmode)
 {
-    HttpRangeContainersInit();
     if (runmode == RUNMODE_UNIX_SOCKET)
         return;
 
@@ -2230,45 +2236,42 @@ void PreRunInit(const int runmode)
     AppLayerParserPostStreamSetup();
     AppLayerRegisterGlobalCounters();
     OutputFilestoreRegisterGlobalCounters();
+    HttpRangeContainersInit();
 }
 
 /* tasks we need to run before packets start flowing,
  * but after we dropped privs */
 void PreRunPostPrivsDropInit(const int runmode)
 {
-    StatsSetupPostConfigPreOutput();
-    RunModeInitializeOutputs();
-    DatasetsInit();
-
     if (runmode == RUNMODE_UNIX_SOCKET) {
-        /* As the above did some necessary startup initialization, it
-         * also setup some outputs where only one is allowed, so
-         * deinitialize to the state that unix-mode does after every
-         * pcap. */
-        PostRunDeinit(RUNMODE_PCAP_FILE, NULL);
         return;
     }
 
+    StatsSetupPostConfigPreOutput();
+    RunModeInitializeOutputs();
+    DatasetsInit();
     StatsSetupPostConfigPostOutput();
 }
 
-/* clean up / shutdown code for both the main modes and for
- * unix socket mode.
+/** \brief clean up / shutdown code for packet modes
  *
- * Will be run once per pcap in unix-socket mode */
+ *  Shuts down packet modes, so regular packet runmodes and the
+ *  per pcap mode in the unix socket. */
 void PostRunDeinit(const int runmode, struct timeval *start_time)
 {
     if (runmode == RUNMODE_UNIX_SOCKET)
         return;
 
-    /* needed by FlowForceReassembly */
+    TmThreadsUnsealThreads();
+
+    /* needed by FlowWorkToDoCleanup */
     PacketPoolInit();
 
     /* handle graceful shutdown of the flow engine, it's helper
      * threads and the packet threads */
     FlowDisableFlowManagerThread();
     TmThreadDisableReceiveThreads();
-    FlowForceReassembly();
+    FlowWorkToDoCleanup();
     TmThreadDisablePacketThreads();
     SCPrintElapsedTime(start_time);
     FlowDisableFlowRecyclerThread();
@@ -2297,17 +2300,17 @@ void PostRunDeinit(const int runmode, struct timeval *start_time)
 
     TmqResetQueues();
 #ifdef PROFILING
-    if (profiling_rules_enabled)
+    if (profiling_packets_enabled)
         SCProfilingDump();
     SCProfilingDestroy();
 #endif
 }
 
-
-static int StartInternalRunMode(SCInstance *suri, int argc, char **argv)
+int SCStartInternalRunMode(int argc, char **argv)
 {
+    SCInstance *suri = &suricata;
     /* Treat internal running mode */
-    switch(suri->run_mode) {
+    switch (suri->run_mode) {
         case RUNMODE_LIST_KEYWORDS:
             return ListKeywords(suri->keyword_info);
         case RUNMODE_LIST_APP_LAYERS:
@@ -2340,7 +2343,7 @@ static int StartInternalRunMode(SCInstance *suri, int argc, char **argv)
             SCLogInfo("Suricata service has been successfully installed.");
             return TM_ECODE_DONE;
         case RUNMODE_REMOVE_SERVICE:
-            if (SCServiceRemove(argc, argv)) {
+            if (SCServiceRemove()) {
                 return TM_ECODE_FAILED;
             }
             SCLogInfo("Suricata service has been successfully removed.");
@@ -2359,17 +2362,16 @@ static int StartInternalRunMode(SCInstance *suri, int argc, char **argv)
     return TM_ECODE_OK;
 }
 
-static int FinalizeRunMode(SCInstance *suri, char **argv)
+int SCFinalizeRunMode(void)
 {
+    SCInstance *suri = &suricata;
     switch (suri->run_mode) {
         case RUNMODE_UNKNOWN:
-            PrintUsage(argv[0]);
+            PrintUsage(suri->progname);
             return TM_ECODE_FAILED;
         default:
             break;
     }
-    /* Set the global run mode and offline flag. */
-    run_mode = suri->run_mode;
 
     if (!CheckValidDaemonModes(suri->daemon, suri->run_mode)) {
         return TM_ECODE_FAILED;
@@ -2422,16 +2424,16 @@ static int ConfigGetCaptureValue(SCInstance *suri)
     intmax_t tmp_max_pending_packets;
     if (ConfGetInt("max-pending-packets", &tmp_max_pending_packets) != 1)
         tmp_max_pending_packets = DEFAULT_MAX_PENDING_PACKETS;
-    if (tmp_max_pending_packets < 1 || tmp_max_pending_packets >= UINT16_MAX) {
-        SCLogError("Maximum max-pending-packets setting is 65534 and must be greater than 0. "
+    if (tmp_max_pending_packets < 1 || tmp_max_pending_packets > 2147483648) {
+        SCLogError("Maximum max-pending-packets setting is 2147483648 and must be greater than 0. "
                    "Please check %s for errors",
                 suri->conf_filename);
         return TM_ECODE_FAILED;
     } else {
-        max_pending_packets = (uint16_t)tmp_max_pending_packets;
+        max_pending_packets = (uint32_t)tmp_max_pending_packets;
     }
 
-    SCLogDebug("Max pending packets set to %" PRIu16, max_pending_packets);
+    SCLogDebug("Max pending packets set to %" PRIu32, max_pending_packets);
 
     /* Pull the default packet size from the config, if not found fall
      * back on a sane default. */
@@ -2460,10 +2462,10 @@ static int ConfigGetCaptureValue(SCInstance *suri)
                  * interface really is igb0 */
                 strip_trailing_plus = 1;
                 /* fall through */
+            case RUNMODE_PLUGIN:
             case RUNMODE_PCAP_DEV:
             case RUNMODE_AFP_DEV:
             case RUNMODE_AFXDP_DEV:
-            case RUNMODE_PFRING:
                 nlive = LiveGetDeviceCount();
                 for (lthread = 0; lthread < nlive; lthread++) {
                     const char *live_dev = LiveGetDeviceName(lthread);
@@ -2598,14 +2600,14 @@ static void PostConfLoadedSetupHostMode(void)
 static void SetupUserMode(SCInstance *suri)
 {
     /* apply 'user mode' config updates here */
-    if (suri->system == false) {
-        if (suri->set_logdir == false) {
+    if (!suri->system) {
+        if (!suri->set_logdir) {
             /* override log dir to current work dir" */
             if (ConfigSetLogDirectory((char *)".") != TM_ECODE_OK) {
                 FatalError("could not set USER mode logdir");
             }
         }
-        if (suri->set_datadir == false) {
+        if (!suri->set_datadir) {
             /* override data dir to current work dir" */
             if (ConfigSetDataDirectory((char *)".") != TM_ECODE_OK) {
                 FatalError("could not set USER mode datadir");
@@ -2620,13 +2622,6 @@ static void SetupUserMode(SCInstance *suri)
  */
 int PostConfLoadedSetup(SCInstance *suri)
 {
-    /* do this as early as possible #1577 #1955 */
-#ifdef HAVE_LUAJIT
-    if (LuajitSetupStatesPool() != 0) {
-        SCReturnInt(TM_ECODE_FAILED);
-    }
-#endif
-
     /* load the pattern matchers */
     MpmTableSetup();
     SpmTableSetup();
@@ -2674,10 +2669,18 @@ int PostConfLoadedSetup(SCInstance *suri)
 
     MacSetRegisterFlowStorage();
 
+    SigTableInit();
+
+#ifdef HAVE_PLUGINS
+    SCPluginsLoad(suri->capture_plugin_name, suri->capture_plugin_args);
+#endif
+
     LiveDeviceFinalize(); // must be after EBPF extension registration
 
-    RunModeEngineIsIPS(
-            suricata.run_mode, suricata.runmode_custom_mode, suricata.capture_plugin_name);
+    if (RunModeEngineIsIPS(suricata.run_mode, suricata.runmode_custom_mode,
+                suricata.capture_plugin_name) < 0) {
+        FatalError("IPS mode setup failed");
+    }
 
     if (EngineModeIsUnknown()) { // if still uninitialized, set the default
         SCLogInfo("Setting engine mode to IDS mode by default");
@@ -2685,6 +2688,17 @@ int PostConfLoadedSetup(SCInstance *suri)
     }
 
     SetMasterExceptionPolicy();
+
+    ConfNode *eps = ConfGetNode("stats.exception-policy");
+    if (eps != NULL) {
+        if (ConfNodeChildValueIsTrue(eps, "per-app-proto-errors")) {
+            g_stats_eps_per_app_proto_errors = true;
+        }
+    }
+
+    /* Must occur prior to output mod registration
+       and app layer setup. */
+    FeatureTrackingRegister();
 
     AppLayerSetup();
 
@@ -2743,11 +2757,7 @@ int PostConfLoadedSetup(SCInstance *suri)
         SCReturnInt(TM_ECODE_FAILED);
     }
 
-    FeatureTrackingRegister(); /* must occur prior to output mod registration */
     RegisterAllModules();
-#ifdef HAVE_PLUGINS
-    SCPluginsLoad(suri->capture_plugin_name, suri->capture_plugin_args);
-#endif
     AppLayerHtpNeedFileInspection();
 
     StorageFinalize();
@@ -2799,8 +2809,9 @@ int PostConfLoadedSetup(SCInstance *suri)
     SCReturnInt(TM_ECODE_OK);
 }
 
-static void SuricataMainLoop(SCInstance *suri)
+void SuricataMainLoop(void)
 {
+    SCInstance *suri = &suricata;
     while(1) {
         if (sigterm_count || sigint_count) {
             suricata_ctl_flags |= SURICATA_STOP;
@@ -2871,46 +2882,26 @@ int InitGlobal(void)
     ConfInit();
 
     VarNameStoreInit();
+
+    // zero all module storage
+    memset(tmm_modules, 0, TMM_SIZE * sizeof(TmModule));
+
     return 0;
 }
 
-int SuricataMain(int argc, char **argv)
+void SuricataPreInit(const char *progname)
 {
-    SCInstanceInit(&suricata, argv[0]);
+    SCInstanceInit(&suricata, progname);
 
     if (InitGlobal() != 0) {
         exit(EXIT_FAILURE);
     }
+}
 
-#ifdef OS_WIN32
-    /* service initialization */
-    if (WindowsInitService(argc, argv) != 0) {
-        exit(EXIT_FAILURE);
-    }
-#endif /* OS_WIN32 */
-
-    if (ParseCommandLine(argc, argv, &suricata) != TM_ECODE_OK) {
-        exit(EXIT_FAILURE);
-    }
-
-    if (FinalizeRunMode(&suricata, argv) != TM_ECODE_OK) {
-        exit(EXIT_FAILURE);
-    }
-
-    switch (StartInternalRunMode(&suricata, argc, argv)) {
-        case TM_ECODE_DONE:
-            exit(EXIT_SUCCESS);
-        case TM_ECODE_FAILED:
-            exit(EXIT_FAILURE);
-    }
-
+void SuricataInit(void)
+{
     /* Initializations for global vars, queues, etc (memsets, mutex init..) */
     GlobalsInitPreConfig();
-
-    /* Load yaml configuration file if provided. */
-    if (LoadYamlConfig(&suricata) != TM_ECODE_OK) {
-        exit(EXIT_FAILURE);
-    }
 
     if (suricata.run_mode == RUNMODE_DUMP_CONFIG) {
         ConfDump();
@@ -2926,6 +2917,10 @@ int SuricataMain(int argc, char **argv)
     if (ConfGetBool("livedev.use-for-tracking", &tracking) == 1 && !tracking) {
         /* Ignore livedev id when comparing flows. */
         g_livedev_mask = 0x0000;
+    }
+    if (ConfGetBool("decoder.recursion-level.use-for-tracking", &tracking) == 1 && !tracking) {
+        /* Ignore recursion level when comparing flows. */
+        g_recurlvl_mask = 0x00;
     }
     SetupUserMode(&suricata);
     InitRunAs(&suricata);
@@ -2973,15 +2968,38 @@ int SuricataMain(int argc, char **argv)
         goto out;
     }
 
+    if (suricata.run_mode == RUNMODE_DPDK)
+        prerun_snap = SystemHugepageSnapshotCreate();
+
     SCSetStartTime(&suricata);
-    RunModeDispatch(suricata.run_mode, suricata.runmode_custom_mode,
-            suricata.capture_plugin_name, suricata.capture_plugin_args);
     if (suricata.run_mode != RUNMODE_UNIX_SOCKET) {
         UnixManagerThreadSpawnNonRunmode(suricata.unix_socket_enabled);
     }
+    RunModeDispatch(suricata.run_mode, suricata.runmode_custom_mode, suricata.capture_plugin_name,
+            suricata.capture_plugin_args);
+    return;
 
+out:
+    GlobalsDestroy();
+    exit(EXIT_SUCCESS);
+}
+
+void SuricataShutdown(void)
+{
+    /* Update the engine stage/status flag */
+    SC_ATOMIC_SET(engine_stage, SURICATA_DEINIT);
+
+    UnixSocketKillSocketThread();
+    PostRunDeinit(suricata.run_mode, &suricata.start_time);
+    /* kill remaining threads */
+    TmThreadKillThreads();
+}
+
+void SuricataPostInit(void)
+{
     /* Wait till all the threads have been initialized */
     if (TmThreadWaitOnThreadInit() == TM_ECODE_FAILED) {
+        SystemHugepageSnapshotDestroy(prerun_snap);
         FatalError("Engine initialization failed, "
                    "aborting...");
     }
@@ -3023,6 +3041,7 @@ int SuricataMain(int argc, char **argv)
 
     /* Must ensure all threads are fully operational before continuing with init process */
     if (TmThreadWaitOnThreadRunning() != TM_ECODE_OK) {
+        SystemHugepageSnapshotDestroy(prerun_snap);
         exit(EXIT_FAILURE);
     }
 
@@ -3030,22 +3049,11 @@ int SuricataMain(int argc, char **argv)
     OnNotifyRunning();
 
     PostRunStartedDetectSetup(&suricata);
-
-    DPDKEvaluateHugepages();
-
+    if (suricata.run_mode == RUNMODE_DPDK) { // only DPDK uses hpages at the moment
+        SystemHugepageSnapshot *postrun_snap = SystemHugepageSnapshotCreate();
+        SystemHugepageEvaluateHugepages(prerun_snap, postrun_snap);
+        SystemHugepageSnapshotDestroy(prerun_snap);
+        SystemHugepageSnapshotDestroy(postrun_snap);
+    }
     SCPledge();
-    SuricataMainLoop(&suricata);
-
-    /* Update the engine stage/status flag */
-    SC_ATOMIC_SET(engine_stage, SURICATA_DEINIT);
-
-    UnixSocketKillSocketThread();
-    PostRunDeinit(suricata.run_mode, &suricata.start_time);
-    /* kill remaining threads */
-    TmThreadKillThreads();
-
-out:
-    GlobalsDestroy(&suricata);
-
-    exit(EXIT_SUCCESS);
 }

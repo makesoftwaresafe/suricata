@@ -122,6 +122,11 @@ fn log_quic(tx: &QuicTransaction, js: &mut JsonBuilder) -> Result<(), JsonError>
         js.set_string("string", ja3)?;
         js.close()?;
     }
+
+    if let Some(ref ja4) = &tx.ja4 {
+        js.set_string("ja4", ja4)?;
+    }
+
     if !tx.extv.is_empty() {
         js.open_array("extensions")?;
         for e in &tx.extv {
@@ -130,7 +135,7 @@ fn log_quic(tx: &QuicTransaction, js: &mut JsonBuilder) -> Result<(), JsonError>
             if let Some(s) = quic_tls_extension_name(etype) {
                 js.set_string("name", &s)?;
             }
-            js.set_uint("type", etype.into())?;
+            js.set_uint("type", etype)?;
 
             if !e.values.is_empty() {
                 js.open_array("values")?;

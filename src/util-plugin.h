@@ -15,15 +15,14 @@
  * 02110-1301, USA.
  */
 
-#ifndef __UTIL_PLUGIN_H__
-#define __UTIL_PLUGIN_H__
+#ifndef SURICATA_UTIL_PLUGIN_H
+#define SURICATA_UTIL_PLUGIN_H
 
 #include "suricata-plugin.h"
 
 void SCPluginsLoad(const char *capture_plugin_name, const char *capture_plugin_args);
-SCEveFileType *SCPluginFindFileType(const char *name);
 SCCapturePlugin *SCPluginFindCaptureByName(const char *name);
 
 bool RegisterPlugin(SCPlugin *, void *);
 
-#endif /* __UTIL_PLUGIN_H__ */
+#endif /* SURICATA_UTIL_PLUGIN_H */

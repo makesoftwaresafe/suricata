@@ -22,8 +22,8 @@
  * \author Anoop Saldanha <anoopsaldanha@gmail.com>
  */
 
-#ifndef __APP_LAYER_PARSER_H__
-#define __APP_LAYER_PARSER_H__
+#ifndef SURICATA_APP_LAYER_PARSER_H
+#define SURICATA_APP_LAYER_PARSER_H
 
 #include "app-layer-events.h"
 #include "util-file.h"
@@ -38,8 +38,7 @@
 #define APP_LAYER_PARSER_BYPASS_READY          BIT_U16(4)
 #define APP_LAYER_PARSER_EOF_TS                BIT_U16(5)
 #define APP_LAYER_PARSER_EOF_TC                BIT_U16(6)
-#define APP_LAYER_PARSER_TRUNC_TS              BIT_U16(7)
-#define APP_LAYER_PARSER_TRUNC_TC              BIT_U16(8)
+/* 2x vacancy */
 #define APP_LAYER_PARSER_SFRAME_TS             BIT_U16(9)
 #define APP_LAYER_PARSER_SFRAME_TC             BIT_U16(10)
 
@@ -159,6 +158,7 @@ typedef AppLayerGetTxIterTuple (*AppLayerGetTxIteratorFunc)
 typedef int (*AppLayerParserGetFrameIdByNameFn)(const char *frame_name);
 typedef const char *(*AppLayerParserGetFrameNameByIdFn)(const uint8_t id);
 
+int AppLayerParserPreRegister(void (*Register)(void));
 /**
  * \brief Register app layer parser for the protocol.
  *
@@ -179,12 +179,10 @@ void AppLayerParserRegisterLocalStorageFunc(uint8_t ipproto, AppProto proto,
         void *(*LocalStorageAlloc)(void), void (*LocalStorageFree)(void *));
 // void AppLayerParserRegisterGetEventsFunc(uint8_t ipproto, AppProto proto,
 //     AppLayerDecoderEvents *(*StateGetEvents)(void *) __attribute__((nonnull)));
-void AppLayerParserRegisterGetTxFilesFunc(uint8_t ipproto, AppProto alproto,
-        AppLayerGetFileState (*GetTxFiles)(void *, void *, uint8_t));
+void AppLayerParserRegisterGetTxFilesFunc(
+        uint8_t ipproto, AppProto alproto, AppLayerGetFileState (*GetTxFiles)(void *, uint8_t));
 void AppLayerParserRegisterLogger(uint8_t ipproto, AppProto alproto);
 void AppLayerParserRegisterLoggerBits(uint8_t ipproto, AppProto alproto, LoggerId bits);
-void AppLayerParserRegisterTruncateFunc(uint8_t ipproto, AppProto alproto,
-                             void (*Truncate)(void *, uint8_t));
 void AppLayerParserRegisterGetStateProgressFunc(uint8_t ipproto, AppProto alproto,
     int (*StateGetStateProgress)(void *alstate, uint8_t direction));
 void AppLayerParserRegisterTxFreeFunc(uint8_t ipproto, AppProto alproto,
@@ -198,11 +196,11 @@ void AppLayerParserRegisterGetTxIterator(uint8_t ipproto, AppProto alproto,
 void AppLayerParserRegisterStateProgressCompletionStatus(
         AppProto alproto, const int ts, const int tc);
 void AppLayerParserRegisterGetEventInfo(uint8_t ipproto, AppProto alproto,
-    int (*StateGetEventInfo)(const char *event_name, int *event_id,
-                             AppLayerEventType *event_type));
+        int (*StateGetEventInfo)(
+                const char *event_name, uint8_t *event_id, AppLayerEventType *event_type));
 void AppLayerParserRegisterGetEventInfoById(uint8_t ipproto, AppProto alproto,
-    int (*StateGetEventInfoById)(int event_id, const char **event_name,
-                                 AppLayerEventType *event_type));
+        int (*StateGetEventInfoById)(
+                uint8_t event_id, const char **event_name, AppLayerEventType *event_type));
 void AppLayerParserRegisterGetFrameFuncs(uint8_t ipproto, AppProto alproto,
         AppLayerParserGetFrameIdByNameFn GetFrameIdByName,
         AppLayerParserGetFrameNameByIdFn GetFrameNameById);
@@ -218,7 +216,6 @@ void AppLayerParserRegisterStateDataFunc(
 
 /***** Get and transaction functions *****/
 
-uint32_t AppLayerParserGetOptionFlags(uint8_t protomap, AppProto alproto);
 AppLayerGetTxIteratorFunc AppLayerGetTxIterator(const uint8_t ipproto,
          const AppProto alproto);
 
@@ -235,19 +232,17 @@ void AppLayerParserSetTransactionInspectId(const Flow *f, AppLayerParserState *p
                                 void *alstate, const uint8_t flags, bool tag_txs_as_inspected);
 
 AppLayerDecoderEvents *AppLayerParserGetDecoderEvents(AppLayerParserState *pstate);
-void AppLayerParserSetDecoderEvents(AppLayerParserState *pstate, AppLayerDecoderEvents *devents);
 AppLayerDecoderEvents *AppLayerParserGetEventsByTx(uint8_t ipproto, AppProto alproto, void *tx);
-AppLayerGetFileState AppLayerParserGetTxFiles(
-        const Flow *f, void *state, void *tx, const uint8_t direction);
+AppLayerGetFileState AppLayerParserGetTxFiles(const Flow *f, void *tx, const uint8_t direction);
 int AppLayerParserGetStateProgress(uint8_t ipproto, AppProto alproto,
                         void *alstate, uint8_t direction);
 uint64_t AppLayerParserGetTxCnt(const Flow *, void *alstate);
 void *AppLayerParserGetTx(uint8_t ipproto, AppProto alproto, void *alstate, uint64_t tx_id);
 int AppLayerParserGetStateProgressCompletionStatus(AppProto alproto, uint8_t direction);
 int AppLayerParserGetEventInfo(uint8_t ipproto, AppProto alproto, const char *event_name,
-                    int *event_id, AppLayerEventType *event_type);
-int AppLayerParserGetEventInfoById(uint8_t ipproto, AppProto alproto, int event_id,
-                    const char **event_name, AppLayerEventType *event_type);
+        uint8_t *event_id, AppLayerEventType *event_type);
+int AppLayerParserGetEventInfoById(uint8_t ipproto, AppProto alproto, uint8_t event_id,
+        const char **event_name, AppLayerEventType *event_type);
 
 uint64_t AppLayerParserGetTransactionActive(const Flow *f, AppLayerParserState *pstate, uint8_t direction);
 
@@ -315,23 +310,16 @@ void AppLayerParserStateFree(AppLayerParserState *pstate);
 
 void AppLayerParserTransactionsCleanup(Flow *f, const uint8_t pkt_dir);
 
-#ifdef DEBUG
-void AppLayerParserStatePrintDetails(AppLayerParserState *pstate);
-#endif
-
-
 /***** Unittests *****/
 
 #ifdef UNITTESTS
 void AppLayerParserRegisterProtocolUnittests(uint8_t ipproto, AppProto alproto,
                                   void (*RegisterUnittests)(void));
 void AppLayerParserRegisterUnittests(void);
-void AppLayerParserBackupParserTable(void);
-void AppLayerParserRestoreParserTable(void);
 void UTHAppLayerParserStateGetIds(void *ptr, uint64_t *i1, uint64_t *i2, uint64_t *log, uint64_t *min);
 #endif
 
 void AppLayerFramesFreeContainer(Flow *f);
 void FileApplyTxFlags(const AppLayerTxData *txd, const uint8_t direction, File *file);
 
-#endif /* __APP_LAYER_PARSER_H__ */
+#endif /* SURICATA_APP_LAYER_PARSER_H */

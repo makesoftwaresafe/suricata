@@ -30,7 +30,6 @@
  *
  */
 
-#define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #define SC_PCAP_DONT_INCLUDE_PCAP_H 1
 #include "suricata-common.h"
 #include "suricata.h"
@@ -73,14 +72,15 @@
 #endif
 
 #ifdef HAVE_PACKET_EBPF
+#define PCAP_DONT_INCLUDE_PCAP_BPF_H 1
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
-#endif
 
 struct bpf_program {
     unsigned int bf_len;
     struct bpf_insn *bf_insns;
 };
+#endif
 
 #ifdef HAVE_PCAP_H
 #include <pcap.h>
@@ -118,7 +118,7 @@ struct bpf_program {
 
 #endif /* HAVE_AF_PACKET */
 
-extern uint16_t max_pending_packets;
+extern uint32_t max_pending_packets;
 
 #ifndef HAVE_AF_PACKET
 
@@ -257,7 +257,6 @@ static int AFPBypassCallback(Packet *p);
 static int AFPXDPBypassCallback(Packet *p);
 #endif
 
-#define MAX_MAPS 32
 /**
  * \brief Structure to hold thread specific variables.
  */
@@ -610,8 +609,7 @@ void TmModuleDecodeAFPRegister (void)
     tmm_modules[TMM_DECODEAFP].flags = TM_FLAG_DECODE_TM;
 }
 
-
-static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose);
+static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose, const bool peer_update);
 
 static inline void AFPDumpCounters(AFPThreadVars *ptv)
 {
@@ -659,17 +657,18 @@ static void AFPWritePacket(Packet *p, int version)
         }
     }
 
-    if (p->ethh == NULL) {
+    if (!PacketIsEthernet(p)) {
         SCLogWarning("packet should have an ethernet header");
         return;
     }
 
+    const EthernetHdr *ethh = PacketGetEthernet(p);
     /* Index of the network device */
     socket_address.sll_ifindex = SC_ATOMIC_GET(p->afp_v.peer->if_idx);
     /* Address length*/
     socket_address.sll_halen = ETH_ALEN;
     /* Destination MAC */
-    memcpy(socket_address.sll_addr, p->ethh, 6);
+    memcpy(socket_address.sll_addr, ethh, 6);
 
     /* Send packet, locking the socket if necessary */
     if (p->afp_v.peer->flags & AFP_SOCK_PROTECT)
@@ -1290,7 +1289,7 @@ static int AFPTryReopen(AFPThreadVars *ptv)
     /* ref cnt 0, we can close the old socket */
     AFPCloseSocket(ptv);
 
-    int afp_activate_r = AFPCreateSocket(ptv, ptv->iface, 0);
+    int afp_activate_r = AFPCreateSocket(ptv, ptv->iface, 0, false);
     if (afp_activate_r != 0) {
         if (ptv->down_count % AFP_DOWN_COUNTER_INTERVAL == 0) {
             SCLogWarning("%s: can't reopen interface", ptv->iface);
@@ -1334,7 +1333,7 @@ TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot)
                 break;
             }
         }
-        r = AFPCreateSocket(ptv, ptv->iface, 1);
+        r = AFPCreateSocket(ptv, ptv->iface, 1, true);
         if (r < 0) {
             switch (-r) {
                 case AFP_FATAL_ERROR:
@@ -1345,7 +1344,6 @@ TmEcode ReceiveAFPLoop(ThreadVars *tv, void *data, void *slot)
                             "%s: failed to init socket for interface, retrying soon", ptv->iface);
             }
         }
-        AFPPeersListReachedInc();
     }
     if (ptv->afp_state == AFP_STATE_UP) {
         SCLogDebug("Thread %s using socket %d", tv->name, ptv->socket);
@@ -1851,25 +1849,26 @@ static int SockFanoutSeteBPF(AFPThreadVars *ptv)
     return 0;
 }
 
-static int SetEbpfFilter(AFPThreadVars *ptv)
+static TmEcode SetEbpfFilter(AFPThreadVars *ptv)
 {
     int pfd = ptv->ebpf_filter_fd;
     if (pfd == -1) {
         SCLogError("Filter file descriptor is invalid");
-        return -1;
+        return TM_ECODE_FAILED;
     }
 
     if (setsockopt(ptv->socket, SOL_SOCKET, SO_ATTACH_BPF, &pfd, sizeof(pfd))) {
         SCLogError("Error setting ebpf: %s", strerror(errno));
-        return -1;
+        return TM_ECODE_FAILED;
     }
     SCLogInfo("Activated eBPF filter on socket");
 
-    return 0;
+    return TM_ECODE_OK;
 }
 #endif
 
-static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose)
+/** \param peer_update increment peers reached */
+static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose, const bool peer_update)
 {
     int r;
     int ret = AFP_FATAL_ERROR;
@@ -1994,7 +1993,10 @@ static int AFPCreateSocket(AFPThreadVars *ptv, char *devname, int verbose)
         }
     }
 #endif
-
+    /* bind() done, allow next thread to continue */
+    if (peer_update) {
+        AFPPeersListReachedInc();
+    }
     ret = AFPSetupRing(ptv, devname);
     if (ret != 0)
         goto socket_err;
@@ -2181,7 +2183,7 @@ static int AFPBypassCallback(Packet *p)
 {
     SCLogDebug("Calling af_packet callback function");
     /* Only bypass TCP and UDP */
-    if (!(PKT_IS_TCP(p) || PKT_IS_UDP(p))) {
+    if (!(PacketIsTCP(p) || PacketIsUDP(p))) {
         return 0;
     }
 
@@ -2194,10 +2196,10 @@ static int AFPBypassCallback(Packet *p)
     /* Bypassing tunneled packets is currently not supported
      * because we can't discard the inner packet only due to
      * primitive parsing in eBPF */
-    if (IS_TUNNEL_PKT(p)) {
+    if (PacketIsTunnel(p)) {
         return 0;
     }
-    if (PKT_IS_IPV4(p)) {
+    if (PacketIsIPv4(p)) {
         SCLogDebug("add an IPv4");
         if (p->afp_v.v4_map_fd == -1) {
             return 0;
@@ -2209,13 +2211,13 @@ static int AFPBypassCallback(Packet *p)
         }
         keys[0]->src = htonl(GET_IPV4_SRC_ADDR_U32(p));
         keys[0]->dst = htonl(GET_IPV4_DST_ADDR_U32(p));
-        keys[0]->port16[0] = GET_TCP_SRC_PORT(p);
-        keys[0]->port16[1] = GET_TCP_DST_PORT(p);
+        keys[0]->port16[0] = p->sp;
+        keys[0]->port16[1] = p->dp;
         keys[0]->vlan0 = p->vlan_id[0];
         keys[0]->vlan1 = p->vlan_id[1];
         keys[0]->vlan2 = p->vlan_id[2];
 
-        if (IPV4_GET_IPPROTO(p) == IPPROTO_TCP) {
+        if (p->proto == IPPROTO_TCP) {
             keys[0]->ip_proto = 1;
         } else {
             keys[0]->ip_proto = 0;
@@ -2235,8 +2237,8 @@ static int AFPBypassCallback(Packet *p)
         }
         keys[1]->src = htonl(GET_IPV4_DST_ADDR_U32(p));
         keys[1]->dst = htonl(GET_IPV4_SRC_ADDR_U32(p));
-        keys[1]->port16[0] = GET_TCP_DST_PORT(p);
-        keys[1]->port16[1] = GET_TCP_SRC_PORT(p);
+        keys[1]->port16[0] = p->dp;
+        keys[1]->port16[1] = p->sp;
         keys[1]->vlan0 = p->vlan_id[0];
         keys[1]->vlan1 = p->vlan_id[1];
         keys[1]->vlan2 = p->vlan_id[2];
@@ -2254,8 +2256,7 @@ static int AFPBypassCallback(Packet *p)
         return AFPSetFlowStorage(p, p->afp_v.v4_map_fd, keys[0], keys[1], AF_INET);
     }
     /* For IPv6 case we don't handle extended header in eBPF */
-    if (PKT_IS_IPV6(p) &&
-        ((IPV6_GET_NH(p) == IPPROTO_TCP) || (IPV6_GET_NH(p) == IPPROTO_UDP))) {
+    if (PacketIsIPv6(p) && ((p->proto == IPPROTO_TCP) || (p->proto == IPPROTO_UDP))) {
         int i;
         if (p->afp_v.v6_map_fd == -1) {
             return 0;
@@ -2271,13 +2272,13 @@ static int AFPBypassCallback(Packet *p)
             keys[0]->src[i] = ntohl(GET_IPV6_SRC_ADDR(p)[i]);
             keys[0]->dst[i] = ntohl(GET_IPV6_DST_ADDR(p)[i]);
         }
-        keys[0]->port16[0] = GET_TCP_SRC_PORT(p);
-        keys[0]->port16[1] = GET_TCP_DST_PORT(p);
+        keys[0]->port16[0] = p->sp;
+        keys[0]->port16[1] = p->dp;
         keys[0]->vlan0 = p->vlan_id[0];
         keys[0]->vlan1 = p->vlan_id[1];
         keys[0]->vlan2 = p->vlan_id[2];
 
-        if (IPV6_GET_NH(p) == IPPROTO_TCP) {
+        if (p->proto == IPPROTO_TCP) {
             keys[0]->ip_proto = 1;
         } else {
             keys[0]->ip_proto = 0;
@@ -2299,8 +2300,8 @@ static int AFPBypassCallback(Packet *p)
             keys[1]->src[i] = ntohl(GET_IPV6_DST_ADDR(p)[i]);
             keys[1]->dst[i] = ntohl(GET_IPV6_SRC_ADDR(p)[i]);
         }
-        keys[1]->port16[0] = GET_TCP_DST_PORT(p);
-        keys[1]->port16[1] = GET_TCP_SRC_PORT(p);
+        keys[1]->port16[0] = p->dp;
+        keys[1]->port16[1] = p->sp;
         keys[1]->vlan0 = p->vlan_id[0];
         keys[1]->vlan1 = p->vlan_id[1];
         keys[1]->vlan2 = p->vlan_id[2];
@@ -2336,7 +2337,7 @@ static int AFPXDPBypassCallback(Packet *p)
 {
     SCLogDebug("Calling af_packet callback function");
     /* Only bypass TCP and UDP */
-    if (!(PKT_IS_TCP(p) || PKT_IS_UDP(p))) {
+    if (!(PacketIsTCP(p) || PacketIsUDP(p))) {
         return 0;
     }
 
@@ -2349,10 +2350,10 @@ static int AFPXDPBypassCallback(Packet *p)
     /* Bypassing tunneled packets is currently not supported
      * because we can't discard the inner packet only due to
      * primitive parsing in eBPF */
-    if (IS_TUNNEL_PKT(p)) {
+    if (PacketIsTunnel(p)) {
         return 0;
     }
-    if (PKT_IS_IPV4(p)) {
+    if (PacketIsIPv4(p)) {
         struct flowv4_keys *keys[2];
         keys[0]= SCCalloc(1, sizeof(struct flowv4_keys));
         if (keys[0] == NULL) {
@@ -2372,7 +2373,7 @@ static int AFPXDPBypassCallback(Packet *p)
         keys[0]->vlan0 = p->vlan_id[0];
         keys[0]->vlan1 = p->vlan_id[1];
         keys[0]->vlan2 = p->vlan_id[2];
-        if (IPV4_GET_IPPROTO(p) == IPPROTO_TCP) {
+        if (p->proto == IPPROTO_TCP) {
             keys[0]->ip_proto = 1;
         } else {
             keys[0]->ip_proto = 0;
@@ -2409,8 +2410,7 @@ static int AFPXDPBypassCallback(Packet *p)
         return AFPSetFlowStorage(p, p->afp_v.v4_map_fd, keys[0], keys[1], AF_INET);
     }
     /* For IPv6 case we don't handle extended header in eBPF */
-    if (PKT_IS_IPV6(p) &&
-        ((IPV6_GET_NH(p) == IPPROTO_TCP) || (IPV6_GET_NH(p) == IPPROTO_UDP))) {
+    if (PacketIsIPv6(p) && ((p->proto == IPPROTO_TCP) || (p->proto == IPPROTO_UDP))) {
         SCLogDebug("add an IPv6");
         if (p->afp_v.v6_map_fd == -1) {
             return 0;
@@ -2426,12 +2426,12 @@ static int AFPXDPBypassCallback(Packet *p)
             keys[0]->src[i] = GET_IPV6_SRC_ADDR(p)[i];
             keys[0]->dst[i] = GET_IPV6_DST_ADDR(p)[i];
         }
-        keys[0]->port16[0] = htons(GET_TCP_SRC_PORT(p));
-        keys[0]->port16[1] = htons(GET_TCP_DST_PORT(p));
+        keys[0]->port16[0] = htons(p->sp);
+        keys[0]->port16[1] = htons(p->dp);
         keys[0]->vlan0 = p->vlan_id[0];
         keys[0]->vlan1 = p->vlan_id[1];
         keys[0]->vlan2 = p->vlan_id[2];
-        if (IPV6_GET_NH(p) == IPPROTO_TCP) {
+        if (p->proto == IPPROTO_TCP) {
             keys[0]->ip_proto = 1;
         } else {
             keys[0]->ip_proto = 0;
@@ -2453,8 +2453,8 @@ static int AFPXDPBypassCallback(Packet *p)
             keys[1]->src[i] = GET_IPV6_DST_ADDR(p)[i];
             keys[1]->dst[i] = GET_IPV6_SRC_ADDR(p)[i];
         }
-        keys[1]->port16[0] = htons(GET_TCP_DST_PORT(p));
-        keys[1]->port16[1] = htons(GET_TCP_SRC_PORT(p));
+        keys[1]->port16[0] = htons(p->dp);
+        keys[1]->port16[1] = htons(p->sp);
         keys[1]->vlan0 = p->vlan_id[0];
         keys[1]->vlan1 = p->vlan_id[1];
         keys[1]->vlan2 = p->vlan_id[2];
@@ -2548,7 +2548,7 @@ TmEcode ReceiveAFPThreadInit(ThreadVars *tv, const void *initdata, void **data)
     if (ptv->flags & (AFP_BYPASS|AFP_XDPBYPASS)) {
         ptv->v4_map_fd = EBPFGetMapFDByName(ptv->iface, "flow_table_v4");
         if (ptv->v4_map_fd == -1) {
-            if (g_flowv4_ok == false) {
+            if (!g_flowv4_ok) {
                 SCLogError("Can't find eBPF map fd for '%s'", "flow_table_v4");
                 g_flowv4_ok = true;
             }
@@ -2686,7 +2686,7 @@ static void UpdateRawDataForVLANHdr(Packet *p)
         /* update the packet raw data pointer to start at the new offset */
         (void)PacketSetData(p, pstart, plen);
         /* update ethernet header pointer to point to the new start of the data */
-        p->ethh = (void *)pstart;
+        p->l2.hdrs.ethh = (void *)pstart;
     }
 }
 

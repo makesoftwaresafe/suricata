@@ -1,4 +1,4 @@
-/* Copyright (C) 2013-2022 Open Information Security Foundation
+/* Copyright (C) 2013-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -38,7 +38,6 @@
 #include "detect-engine-dcepayload.h"
 #include "detect-engine-state.h"
 #include "detect-engine-tag.h"
-#include "detect-engine-enip.h"
 #include "detect-fast-pattern.h"
 #include "flow.h"
 #include "flow-timeout.h"
@@ -65,7 +64,8 @@
 #include "app-layer-smtp.h"
 
 #include "util-action.h"
-#include "util-radix-tree.h"
+#include "util-radix4-tree.h"
+#include "util-radix6-tree.h"
 #include "util-host-os-info.h"
 #include "util-cidr.h"
 #include "util-unittest-helper.h"
@@ -85,8 +85,6 @@
 #include "util-spm.h"
 #include "util-hash.h"
 #include "util-hashlist.h"
-#include "util-bloomfilter.h"
-#include "util-bloomfilter-counting.h"
 #include "util-pool.h"
 #include "util-byte.h"
 #include "util-proto-name.h"
@@ -104,15 +102,18 @@
 
 #include "util-streaming-buffer.h"
 #include "util-lua.h"
-#include "util-luajit.h"
 #include "tm-modules.h"
 #include "tmqh-packetpool.h"
 #include "decode-chdlc.h"
 #include "decode-geneve.h"
 #include "decode-nsh.h"
+#include "decode-pppoe.h"
 #include "decode-raw.h"
 #include "decode-vntag.h"
 #include "decode-vxlan.h"
+#include "decode-pppoe.h"
+
+#include "output-json-stats.h"
 
 #ifdef OS_WIN32
 #include "win32-syscall.h"
@@ -137,8 +138,6 @@ static void RegisterUnittests(void)
     SigTableRegisterTests();
     HashTableRegisterTests();
     HashListTableRegisterTests();
-    BloomFilterRegisterTests();
-    BloomFilterCountingRegisterTests();
     PoolRegisterTests();
     ByteRegisterTests();
     MpmRegisterTests();
@@ -173,7 +172,8 @@ static void RegisterUnittests(void)
     HostRegisterUnittests();
     IPPairRegisterUnittests();
     SCSigRegisterSignatureOrderingTests();
-    SCRadixRegisterTests();
+    SCRadix4RegisterTests();
+    SCRadix6RegisterTests();
     DefragRegisterTests();
     SigGroupHeadRegisterTests();
     SCHInfoRegisterTests();
@@ -182,7 +182,6 @@ static void RegisterUnittests(void)
     ThreadMacrosRegisterTests();
     UtilSpmSearchRegistertests();
     UtilActionRegisterTests();
-    Base64RegisterTests();
     SCClassConfRegisterTests();
     SCThresholdConfRegisterTests();
     SCRConfRegisterTests();
@@ -204,7 +203,6 @@ static void RegisterUnittests(void)
     SCAtomicRegisterTests();
     MemrchrRegisterTests();
     AppLayerUnittestsRegister();
-    MimeDecRegisterTests();
     StreamingBufferRegisterTests();
     MacSetRegisterTests();
 #ifdef OS_WIN32
@@ -215,6 +213,7 @@ static void RegisterUnittests(void)
 #endif
     SCProtoNameRegisterTests();
     UtilCIDRTests();
+    OutputJsonStatsRegisterTests();
 }
 #endif
 
@@ -234,12 +233,6 @@ void RunUnittests(int list_unittests, const char *regex_arg)
     GlobalsInitPreConfig();
     EngineModeSetIDS();
 
-#ifdef HAVE_LUAJIT
-    if (LuajitSetupStatesPool() != 0) {
-        exit(EXIT_FAILURE);
-    }
-#endif
-
     default_packet_size = DEFAULT_PACKET_SIZE;
     /* load the pattern matchers */
     MpmTableSetup();
@@ -249,6 +242,7 @@ void RunUnittests(int list_unittests, const char *regex_arg)
     AppLayerSetup();
 
     /* hardcoded initialization code */
+    SigTableInit();
     SigTableSetup(); /* load the rule keywords */
     TmqhSetup();
 
@@ -276,7 +270,7 @@ void RunUnittests(int list_unittests, const char *regex_arg)
         UtListTests(regex_arg);
     } else {
         /* global packet pool */
-        extern uint16_t max_pending_packets;
+        extern uint32_t max_pending_packets;
         max_pending_packets = 128;
         PacketPoolInit();
 
@@ -290,10 +284,6 @@ void RunUnittests(int list_unittests, const char *regex_arg)
             exit(EXIT_FAILURE);
         }
     }
-
-#ifdef HAVE_LUAJIT
-    LuajitFreeStatesPool();
-#endif
 
     exit(EXIT_SUCCESS);
 #else

@@ -1,4 +1,4 @@
-/* Copyright (C) 2022 Open Information Security Foundation
+/* Copyright (C) 2022-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -47,6 +47,7 @@
 #include "rust.h"
 
 #define PGSQL_LOG_PASSWORDS BIT_U32(0)
+#define PGSQL_DEFAULTS      (PGSQL_LOG_PASSWORDS)
 
 typedef struct OutputPgsqlCtx_ {
     uint32_t flags;
@@ -57,6 +58,11 @@ typedef struct LogPgsqlLogThread_ {
     OutputPgsqlCtx *pgsqllog_ctx;
     OutputJsonThreadCtx *ctx;
 } LogPgsqlLogThread;
+
+bool JsonPgsqlAddMetadata(void *vtx, JsonBuilder *jb)
+{
+    return SCPgsqlLogger(vtx, PGSQL_DEFAULTS, jb);
+}
 
 static int JsonPgsqlLogger(ThreadVars *tv, void *thread_data, const Packet *p, Flow *f, void *state,
         void *txptr, uint64_t tx_id)
@@ -70,13 +76,11 @@ static int JsonPgsqlLogger(ThreadVars *tv, void *thread_data, const Packet *p, F
         return TM_ECODE_FAILED;
     }
 
-    jb_open_object(jb, "pgsql");
-    if (!rs_pgsql_logger(txptr, thread->pgsqllog_ctx->flags, jb)) {
+    if (!SCPgsqlLogger(txptr, thread->pgsqllog_ctx->flags, jb)) {
         goto error;
     }
-    jb_close(jb);
 
-    OutputJsonBuilderBuffer(jb, thread->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, jb, thread->ctx);
     jb_free(jb);
 
     return TM_ECODE_OK;
@@ -188,7 +192,7 @@ void JsonPgsqlLogRegister(void)
     /* Register as an eve sub-module. */
     OutputRegisterTxSubModule(LOGGER_JSON_TX, "eve-log", "JsonPgsqlLog", "eve-log.pgsql",
             OutputPgsqlLogInitSub, ALPROTO_PGSQL, JsonPgsqlLogger, JsonPgsqlLogThreadInit,
-            JsonPgsqlLogThreadDeinit, NULL);
+            JsonPgsqlLogThreadDeinit);
 
     SCLogDebug("PostgreSQL JSON logger registered.");
 }

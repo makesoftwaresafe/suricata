@@ -42,7 +42,7 @@ void *fwd;
 SCInstance surifuzz;
 SC_ATOMIC_EXTERN(unsigned int, engine_stage);
 
-#include "confyaml.c"
+extern const char *configNoChecksum;
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -63,7 +63,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         InitGlobal();
 
         GlobalsInitPreConfig();
-        run_mode = RUNMODE_PCAP_FILE;
+        SCRunmodeSet(RUNMODE_PCAP_FILE);
         //redirect logs to /tmp
         ConfigSetLogDirectory("/tmp/");
         //disables checksums validation for fuzzing
@@ -78,7 +78,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         surifuzz.delayed_detect = 1;
 
         PostConfLoadedSetup(&surifuzz);
-        PreRunPostPrivsDropInit(run_mode);
+        PreRunPostPrivsDropInit(SCRunmodeGet());
         PostConfLoadedDetectSetup(&surifuzz);
 
         memset(&tv, 0, sizeof(tv));
@@ -90,7 +90,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         tmm_modules[TMM_FLOWWORKER].ThreadInit(&tv, NULL, &fwd);
         StatsSetupPrivate(&tv);
 
-        extern uint16_t max_pending_packets;
+        extern uint32_t max_pending_packets;
         max_pending_packets = 128;
         PacketPoolInit();
         SC_ATOMIC_SET(engine_stage, SURICATA_RUNTIME);

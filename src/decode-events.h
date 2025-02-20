@@ -22,8 +22,8 @@
  * \author Anoop Saldanha <anoopsaldanha@gmail.com>
  */
 
-#ifndef __DECODE_EVENTS_H__
-#define __DECODE_EVENTS_H__
+#ifndef SURICATA_DECODE_EVENTS_H
+#define SURICATA_DECODE_EVENTS_H
 
 /* packet decoder events */
 enum {
@@ -109,7 +109,8 @@ enum {
     SLL_PKT_TOO_SMALL, /**< sll packet smaller than minimum size */
 
     /* ETHERNET EVENTS */
-    ETHERNET_PKT_TOO_SMALL, /**< ethernet packet smaller than minimum size */
+    ETHERNET_PKT_TOO_SMALL,     /**< ethernet packet smaller than minimum size */
+    ETHERNET_UNKNOWN_ETHERTYPE, /**< ethertype unknown/unhandled*/
 
     /* PPP EVENTS */
     PPP_PKT_TOO_SMALL,     /**< ppp packet smaller than minimum size */
@@ -296,6 +297,16 @@ enum {
     STREAM_REASSEMBLY_INSERT_MEMCAP,
     STREAM_REASSEMBLY_INSERT_LIMIT,
     STREAM_REASSEMBLY_INSERT_INVALID,
+    STREAM_REASSEMBLY_URGENT_OOB_LIMIT_REACHED,
+
+    /* ARP EVENTS */
+    ARP_PKT_TOO_SMALL,         /**< arp packet smaller than minimum size */
+    ARP_UNSUPPORTED_HARDWARE,  /**< arp hw_type is not ethernet */
+    ARP_UNSUPPORTED_PROTOCOL,  /**< arp proto_type is not ipv4 */
+    ARP_INVALID_PKT,           /**< arp pkt len is not 28 */
+    ARP_INVALID_HARDWARE_SIZE, /**< arp hw size is 6 */
+    ARP_INVALID_PROTOCOL_SIZE, /**< arp proto size is not 4 */
+    ARP_UNSUPPORTED_OPCODE,    /**< arp opcode is not listed */
 
     /* should always be last! */
     DECODE_EVENT_MAX,
@@ -313,4 +324,4 @@ struct DecodeEvents_ {
 /* +1 for the end of table marker */
 extern const struct DecodeEvents_ DEvents[DECODE_EVENT_MAX + 1];
 
-#endif /* __DECODE_EVENTS_H__ */
+#endif /* SURICATA_DECODE_EVENTS_H */

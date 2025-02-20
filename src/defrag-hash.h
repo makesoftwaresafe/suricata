@@ -1,4 +1,4 @@
-/* Copyright (C) 2007-2023 Open Information Security Foundation
+/* Copyright (C) 2007-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,12 +21,13 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DEFRAG_HASH_H__
-#define __DEFRAG_HASH_H__
+#ifndef SURICATA_DEFRAG_HASH_H
+#define SURICATA_DEFRAG_HASH_H
 
 #include "decode.h"
 #include "defrag.h"
 #include "util-exception-policy.h"
+#include "util-exception-policy-types.h"
 
 /** Spinlocks or Mutex for the flow buckets. */
 //#define DRLOCK_SPIN
@@ -59,7 +60,6 @@
 typedef struct DefragTrackerHashRow_ {
     DRLOCK_TYPE lock;
     DefragTracker *head;
-    DefragTracker *tail;
 } DefragTrackerHashRow;
 
 /** defrag tracker hash table */
@@ -92,15 +92,14 @@ void DefragInitConfig(bool quiet);
 void DefragHashShutdown(void);
 
 DefragTracker *DefragLookupTrackerFromHash (Packet *);
-DefragTracker *DefragGetTrackerFromHash (Packet *);
+DefragTracker *DefragGetTrackerFromHash(ThreadVars *tv, DecodeThreadVars *dtv, Packet *);
 void DefragTrackerRelease(DefragTracker *);
 void DefragTrackerClearMemory(DefragTracker *);
 void DefragTrackerMoveToSpare(DefragTracker *);
-uint32_t DefragTrackerSpareQueueGetSize(void);
 
 int DefragTrackerSetMemcap(uint64_t);
 uint64_t DefragTrackerGetMemcap(void);
 uint64_t DefragTrackerGetMemuse(void);
+enum ExceptionPolicy DefragGetMemcapExceptionPolicy(void);
 
-#endif /* __DEFRAG_HASH_H__ */
-
+#endif /* SURICATA_DEFRAG_HASH_H */

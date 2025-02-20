@@ -78,15 +78,18 @@ static int PrefilterMpmHttpHeaderRawResponseRegister(DetectEngineCtx *de_ctx, Si
 void DetectHttpRawHeaderRegister(void)
 {
     /* http_raw_header content modifier */
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].name = "http_raw_header";
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].desc = "content modifier to match the raw HTTP header buffer";
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].url = "/rules/http-keywords.html#http-header-and-http-raw-header";
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].Setup = DetectHttpRawHeaderSetup;
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].name = "http_raw_header";
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].desc =
+            "content modifier to match the raw HTTP header buffer";
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].url =
+            "/rules/http-keywords.html#http-header-and-http-raw-header";
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].Setup = DetectHttpRawHeaderSetup;
 #ifdef UNITTESTS
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].RegisterTests = DetectHttpRawHeaderRegisterTests;
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].RegisterTests = DetectHttpRawHeaderRegisterTests;
 #endif
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_CONTENT_MODIFIER;
-    sigmatch_table[DETECT_AL_HTTP_RAW_HEADER].alternative = DETECT_HTTP_RAW_HEADER;
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].flags |=
+            SIGMATCH_NOOPT | SIGMATCH_INFO_CONTENT_MODIFIER;
+    sigmatch_table[DETECT_HTTP_RAW_HEADER_CM].alternative = DETECT_HTTP_RAW_HEADER;
 
     /* http.header.raw sticky buffer */
     sigmatch_table[DETECT_HTTP_RAW_HEADER].name = "http.header.raw";
@@ -96,9 +99,9 @@ void DetectHttpRawHeaderRegister(void)
     sigmatch_table[DETECT_HTTP_RAW_HEADER].flags |= SIGMATCH_NOOPT|SIGMATCH_INFO_STICKY_BUFFER;
 
     DetectAppLayerInspectEngineRegister("http_raw_header", ALPROTO_HTTP1, SIG_FLAG_TOSERVER,
-            HTP_REQUEST_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
+            HTP_REQUEST_PROGRESS_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
     DetectAppLayerInspectEngineRegister("http_raw_header", ALPROTO_HTTP1, SIG_FLAG_TOCLIENT,
-            HTP_RESPONSE_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
+            HTP_RESPONSE_PROGRESS_HEADERS + 1, DetectEngineInspectBufferGeneric, GetData);
 
     DetectAppLayerMpmRegister("http_raw_header", SIG_FLAG_TOSERVER, 2,
             PrefilterMpmHttpHeaderRawRequestRegister, NULL, ALPROTO_HTTP1,
@@ -142,7 +145,7 @@ void DetectHttpRawHeaderRegister(void)
 int DetectHttpRawHeaderSetup(DetectEngineCtx *de_ctx, Signature *s, const char *arg)
 {
     return DetectEngineContentModifierBufferSetup(
-            de_ctx, s, arg, DETECT_AL_HTTP_RAW_HEADER, g_http_raw_header_buffer_id, ALPROTO_HTTP1);
+            de_ctx, s, arg, DETECT_HTTP_RAW_HEADER_CM, g_http_raw_header_buffer_id, ALPROTO_HTTP1);
 }
 
 /**
@@ -303,9 +306,8 @@ static int PrefilterMpmHttpHeaderRawRequestRegister(DetectEngineCtx *de_ctx, Sig
     pectx->mpm_ctx = mpm_ctx;
     pectx->transforms = &mpm_reg->transforms;
 
-    int r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpHeaderRaw,
-            mpm_reg->app_v2.alproto, HTP_REQUEST_HEADERS+1,
-            pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
+    int r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpHeaderRaw, mpm_reg->app_v2.alproto,
+            HTP_REQUEST_PROGRESS_HEADERS + 1, pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
     if (r != 0) {
         SCFree(pectx);
         return r;
@@ -319,9 +321,8 @@ static int PrefilterMpmHttpHeaderRawRequestRegister(DetectEngineCtx *de_ctx, Sig
     pectx->mpm_ctx = mpm_ctx;
     pectx->transforms = &mpm_reg->transforms;
 
-    r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpTrailerRaw,
-            mpm_reg->app_v2.alproto, HTP_REQUEST_TRAILER+1,
-            pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
+    r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpTrailerRaw, mpm_reg->app_v2.alproto,
+            HTP_REQUEST_PROGRESS_TRAILER + 1, pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
     if (r != 0) {
         SCFree(pectx);
     }
@@ -341,9 +342,8 @@ static int PrefilterMpmHttpHeaderRawResponseRegister(DetectEngineCtx *de_ctx, Si
     pectx->mpm_ctx = mpm_ctx;
     pectx->transforms = &mpm_reg->transforms;
 
-    int r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpHeaderRaw,
-            mpm_reg->app_v2.alproto, HTP_RESPONSE_HEADERS,
-            pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
+    int r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpHeaderRaw, mpm_reg->app_v2.alproto,
+            HTP_RESPONSE_PROGRESS_HEADERS, pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
     if (r != 0) {
         SCFree(pectx);
         return r;
@@ -357,9 +357,8 @@ static int PrefilterMpmHttpHeaderRawResponseRegister(DetectEngineCtx *de_ctx, Si
     pectx->mpm_ctx = mpm_ctx;
     pectx->transforms = &mpm_reg->transforms;
 
-    r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpTrailerRaw,
-            mpm_reg->app_v2.alproto, HTP_RESPONSE_TRAILER,
-            pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
+    r = PrefilterAppendTxEngine(de_ctx, sgh, PrefilterMpmHttpTrailerRaw, mpm_reg->app_v2.alproto,
+            HTP_RESPONSE_PROGRESS_TRAILER, pectx, PrefilterMpmHttpHeaderRawFree, mpm_reg->pname);
     if (r != 0) {
         SCFree(pectx);
     }

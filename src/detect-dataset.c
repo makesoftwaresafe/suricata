@@ -40,9 +40,13 @@
 #include "util-misc.h"
 #include "util-path.h"
 #include "util-conf.h"
+#include "util-validate.h"
 
-int DetectDatasetMatch (ThreadVars *, DetectEngineThreadCtx *, Packet *,
-        const Signature *, const SigMatchCtx *);
+#define DETECT_DATASET_CMD_SET      0
+#define DETECT_DATASET_CMD_UNSET    1
+#define DETECT_DATASET_CMD_ISNOTSET 2
+#define DETECT_DATASET_CMD_ISSET    3
+
 static int DetectDatasetSetup (DetectEngineCtx *, Signature *, const char *);
 void DetectDatasetFree (DetectEngineCtx *, void *);
 
@@ -91,8 +95,14 @@ int DetectDatasetBufferMatch(DetectEngineThreadCtx *det_ctx,
                 return 1;
             break;
         }
+        case DETECT_DATASET_CMD_UNSET: {
+            int r = DatasetRemove(sd->set, data, data_len);
+            if (r == 1)
+                return 1;
+            break;
+        }
         default:
-            abort();
+            DEBUG_VALIDATE_BUG_ON("unknown dataset command");
     }
     return 0;
 }
@@ -252,7 +262,6 @@ static void GetDirName(const char *in, char *out, size_t outs)
     char *dir = dirname(tmp);
     BUG_ON(dir == NULL);
     strlcpy(out, dir, outs);
-    return;
 }
 
 static int SetupLoadPath(const DetectEngineCtx *de_ctx,
@@ -404,10 +413,6 @@ int DetectDatasetSetup (DetectEngineCtx *de_ctx, Signature *s, const char *rawst
     Dataset *set = DatasetGet(name, type, save, load, memcap, hashsize);
     if (set == NULL) {
         SCLogError("failed to set up dataset '%s'.", name);
-        return -1;
-    }
-    if (set->hash && SC_ATOMIC_GET(set->hash->memcap_reached)) {
-        SCLogError("dataset too large for set memcap");
         return -1;
     }
 

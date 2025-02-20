@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_ENGINE_H__
-#define __DETECT_ENGINE_H__
+#ifndef SURICATA_DETECT_ENGINE_H
+#define SURICATA_DETECT_ENGINE_H
 
 #include "detect.h"
 #include "suricata.h"
@@ -31,7 +31,8 @@ void InspectionBufferInit(InspectionBuffer *buffer, uint32_t initial_size);
 void InspectionBufferSetup(DetectEngineThreadCtx *det_ctx, const int list_id,
         InspectionBuffer *buffer, const uint8_t *data, const uint32_t data_len);
 void InspectionBufferFree(InspectionBuffer *buffer);
-void InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size);
+void *InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size);
+void InspectionBufferTruncate(InspectionBuffer *buffer, uint32_t buf_len);
 void InspectionBufferCopy(InspectionBuffer *buffer, uint8_t *buf, uint32_t buf_len);
 void InspectionBufferApplyTransforms(InspectionBuffer *buffer,
         const DetectEngineTransforms *transforms);
@@ -74,7 +75,6 @@ bool DetectEngineBufferTypeSupportsMultiInstanceGetById(
         const DetectEngineCtx *de_ctx, const int id);
 bool DetectEngineBufferTypeSupportsFramesGetById(const DetectEngineCtx *de_ctx, const int id);
 const char *DetectEngineBufferTypeGetDescriptionById(const DetectEngineCtx *de_ctx, const int id);
-const DetectBufferType *DetectEngineBufferTypeGetById(const DetectEngineCtx *de_ctx, const int id);
 int DetectEngineBufferTypeGetByIdTransforms(
         DetectEngineCtx *de_ctx, const int id, TransformData *transforms, int transform_cnt);
 void DetectEngineBufferRunSetupCallback(const DetectEngineCtx *de_ctx, const int id, Signature *s);
@@ -146,6 +146,10 @@ uint8_t DetectEngineInspectBufferGeneric(DetectEngineCtx *de_ctx, DetectEngineTh
         const DetectEngineAppInspectionEngine *engine, const Signature *s, Flow *f, uint8_t flags,
         void *alstate, void *txv, uint64_t tx_id);
 
+uint8_t DetectEngineInspectMultiBufferGeneric(DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, const DetectEngineAppInspectionEngine *engine,
+        const Signature *s, Flow *f, uint8_t flags, void *alstate, void *txv, uint64_t tx_id);
+
 int DetectEngineInspectPktBufferGeneric(
         DetectEngineThreadCtx *det_ctx,
         const DetectEnginePktInspectionEngine *engine,
@@ -164,12 +168,13 @@ int DetectEngineInspectPktBufferGeneric(
 void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uint32_t dir,
         int progress, InspectEngineFuncPtr Callback2, InspectionBufferGetDataPtr GetData);
 
+void DetectAppLayerMultiRegister(const char *name, AppProto alproto, uint32_t dir, int progress,
+        InspectionMultiBufferGetDataPtr GetData, int priority, int tx_min_progress);
+
 void DetectPktInspectEngineRegister(const char *name,
         InspectionBufferGetPktDataPtr GetPktData,
         InspectionBufferPktInspectFunc Callback);
 
-void DetectFrameInspectEngineRegister(const char *name, int dir,
-        InspectionBufferFrameInspectFunc Callback, AppProto alproto, uint8_t type);
 void DetectEngineFrameInspectEngineRegister(DetectEngineCtx *de_ctx, const char *name, int dir,
         InspectionBufferFrameInspectFunc Callback, AppProto alproto, uint8_t type);
 
@@ -186,8 +191,6 @@ void DetectEngineSetParseMetadata(void);
 void DetectEngineUnsetParseMetadata(void);
 int DetectEngineMustParseMetadata(void);
 
-SigMatch *DetectBufferGetFirstSigMatch(const Signature *s, const uint32_t buf_id);
-SigMatch *DetectBufferGetLastSigMatch(const Signature *s, const uint32_t buf_id);
 bool DetectBufferIsPresent(const Signature *s, const uint32_t buf_id);
 
 int WARN_UNUSED DetectBufferSetActiveList(DetectEngineCtx *de_ctx, Signature *s, const int list);
@@ -206,4 +209,4 @@ void DetectEngineStateResetTxs(Flow *f);
 
 void DeStateRegisterTests(void);
 
-#endif /* __DETECT_ENGINE_H__ */
+#endif /* SURICATA_DETECT_ENGINE_H */

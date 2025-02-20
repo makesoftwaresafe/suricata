@@ -21,10 +21,11 @@
  * \author Eric Leblond <eric@regit.org>
  */
 
-#ifndef __UTIL_EBPF_H__
-#define __UTIL_EBPF_H__
+#ifndef SURICATA_UTIL_EBPF_H
+#define SURICATA_UTIL_EBPF_H
 
 #include "flow-bypass.h"
+#include "conf.h"
 
 #ifdef HAVE_PACKET_EBPF
 

@@ -221,23 +221,6 @@ uint8_t *Bs2bmSearch(const uint8_t *text, uint32_t textlen,
 }
 
 /**
- * \brief Search a pattern in the text using the Bs2Bm nocase algorithm (build a bad characters array)
- *
- * \param text Text to search in
- * \param textlen length of the text
- * \param needle pattern to search for
- * \param needlelen length of the pattern
- */
-uint8_t *Bs2bmNocaseSearch(const uint8_t *text, uint32_t textlen,
-        const uint8_t *needle, uint16_t needlelen)
-{
-    uint8_t badchars[ALPHABET_SIZE];
-    Bs2BmBadchars(needle, needlelen, badchars);
-
-    return Bs2BmNocase(text, textlen, needle, needlelen, badchars);
-}
-
-/**
  * \brief Search a pattern in the text using Boyer Moore algorithm
  *        (build a bad character shifts array and good prefixes shift array)
  *
@@ -283,9 +266,6 @@ uint8_t *BoyerMooreNocaseSearch(const uint8_t *text, uint32_t textlen,
 /** Comment out this if you want stats
  *  #define ENABLE_SEARCH_STATS 1
  */
-
-/* Number of times to repeat the search (for stats) */
-#define STATS_TIMES 1000000
 
 /**
  * \brief Unittest helper function wrappers for the search algorithms
@@ -420,6 +400,9 @@ static uint8_t *BoyerMooreNocaseWrapper(uint8_t *text, uint8_t *in_needle, int t
 }
 
 #ifdef ENABLE_SEARCH_STATS
+/* Number of times to repeat the search (for stats) */
+#define STATS_TIMES 1000000
+
 /**
  * \brief Unittest helper function wrappers for the search algorithms
  * \param text pointer to the buffer to search in

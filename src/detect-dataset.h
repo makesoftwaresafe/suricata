@@ -21,15 +21,10 @@
  *  \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __DETECT_DATASET_H__
-#define __DETECT_DATASET_H__
+#ifndef SURICATA_DETECT_DATASET_H
+#define SURICATA_DETECT_DATASET_H
 
 #include "datasets.h"
-
-#define DETECT_DATASET_CMD_SET      0
-#define DETECT_DATASET_CMD_UNSET    1
-#define DETECT_DATASET_CMD_ISNOTSET 2
-#define DETECT_DATASET_CMD_ISSET    3
 
 typedef struct DetectDatasetData_ {
     Dataset *set;
@@ -43,4 +38,4 @@ int DetectDatasetBufferMatch(DetectEngineThreadCtx *det_ctx,
 /* prototypes */
 void DetectDatasetRegister (void);
 
-#endif /* __DETECT_DATASET_H__ */
+#endif /* SURICATA_DETECT_DATASET_H */

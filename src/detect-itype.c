@@ -84,14 +84,14 @@ void DetectITypeRegister (void)
 static int DetectITypeMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
         const Signature *s, const SigMatchCtx *ctx)
 {
-    if (PKT_IS_PSEUDOPKT(p))
-        return 0;
+    DEBUG_VALIDATE_BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     uint8_t pitype;
-    if (PKT_IS_ICMPV4(p)) {
-        pitype = ICMPV4_GET_TYPE(p);
-    } else if (PKT_IS_ICMPV6(p)) {
-        pitype = ICMPV6_GET_TYPE(p);
+    if (PacketIsICMPv4(p)) {
+        pitype = p->icmp_s.type;
+    } else if (PacketIsICMPv6(p)) {
+        const ICMPV6Hdr *icmpv6h = PacketGetICMPv6(p);
+        pitype = ICMPV6_GET_TYPE(icmpv6h);
     } else {
         /* Packet not ICMPv4 nor ICMPv6 */
         return 0;
@@ -99,20 +99,6 @@ static int DetectITypeMatch (DetectEngineThreadCtx *det_ctx, Packet *p,
 
     const DetectU8Data *itd = (const DetectU8Data *)ctx;
     return DetectU8Match(pitype, itd);
-}
-
-/**
- * \brief This function is used to parse itype options passed via itype: keyword
- *
- * \param de_ctx Pointer to the detection engine context
- * \param itypestr Pointer to the user provided itype options
- *
- * \retval itd pointer to DetectU8Data on success
- * \retval NULL on failure
- */
-static DetectU8Data *DetectITypeParse(DetectEngineCtx *de_ctx, const char *itypestr)
-{
-    return DetectU8Parse(itypestr);
 }
 
 /**
@@ -130,21 +116,18 @@ static int DetectITypeSetup(DetectEngineCtx *de_ctx, Signature *s, const char *i
 
     DetectU8Data *itd = NULL;
 
-    itd = DetectITypeParse(de_ctx, itypestr);
-    if (itd == NULL) goto error;
+    itd = DetectU8Parse(itypestr);
+    if (itd == NULL)
+        return -1;
 
     if (SigMatchAppendSMToList(de_ctx, s, DETECT_ITYPE, (SigMatchCtx *)itd, DETECT_SM_LIST_MATCH) ==
             NULL) {
-        goto error;
+        DetectITypeFree(de_ctx, itd);
+        return -1;
     }
     s->flags |= SIG_FLAG_REQUIRE_PACKET;
 
     return 0;
-
-error:
-    if (itd != NULL)
-        DetectITypeFree(de_ctx, itd);
-    return -1;
 }
 
 /**
@@ -167,15 +150,14 @@ void DetectITypeFree(DetectEngineCtx *de_ctx, void *ptr)
 static void PrefilterPacketITypeMatch(DetectEngineThreadCtx *det_ctx,
         Packet *p, const void *pectx)
 {
-    if (PKT_IS_PSEUDOPKT(p)) {
-        SCReturn;
-    }
+    DEBUG_VALIDATE_BUG_ON(PKT_IS_PSEUDOPKT(p));
 
     uint8_t pitype;
-    if (PKT_IS_ICMPV4(p)) {
-        pitype = ICMPV4_GET_TYPE(p);
-    } else if (PKT_IS_ICMPV6(p)) {
-        pitype = ICMPV6_GET_TYPE(p);
+    if (PacketIsICMPv4(p)) {
+        pitype = p->icmp_s.type;
+    } else if (PacketIsICMPv6(p)) {
+        const ICMPV6Hdr *icmpv6h = PacketGetICMPv6(p);
+        pitype = ICMPV6_GET_TYPE(icmpv6h);
     } else {
         /* Packet not ICMPv4 nor ICMPv6 */
         return;
@@ -190,8 +172,8 @@ static void PrefilterPacketITypeMatch(DetectEngineThreadCtx *det_ctx,
 
 static int PrefilterSetupIType(DetectEngineCtx *de_ctx, SigGroupHead *sgh)
 {
-    return PrefilterSetupPacketHeaderU8Hash(de_ctx, sgh, DETECT_ITYPE, PrefilterPacketU8Set,
-            PrefilterPacketU8Compare, PrefilterPacketITypeMatch);
+    return PrefilterSetupPacketHeaderU8Hash(de_ctx, sgh, DETECT_ITYPE, SIG_MASK_REQUIRE_REAL_PKT,
+            PrefilterPacketU8Set, PrefilterPacketU8Compare, PrefilterPacketITypeMatch);
 }
 
 static bool PrefilterITypeIsPrefilterable(const Signature *s)
@@ -217,7 +199,7 @@ static bool PrefilterITypeIsPrefilterable(const Signature *s)
 static int DetectITypeParseTest01(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "8");
+    itd = DetectU8Parse("8");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->mode == DETECT_UINT_EQ);
@@ -233,7 +215,7 @@ static int DetectITypeParseTest01(void)
 static int DetectITypeParseTest02(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, ">8");
+    itd = DetectU8Parse(">8");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->mode == DETECT_UINT_GT);
@@ -249,7 +231,7 @@ static int DetectITypeParseTest02(void)
 static int DetectITypeParseTest03(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "<8");
+    itd = DetectU8Parse("<8");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->mode == DETECT_UINT_LT);
@@ -265,7 +247,7 @@ static int DetectITypeParseTest03(void)
 static int DetectITypeParseTest04(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "8<>20");
+    itd = DetectU8Parse("8<>20");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->arg2 == 20);
@@ -282,7 +264,7 @@ static int DetectITypeParseTest04(void)
 static int DetectITypeParseTest05(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "   8 ");
+    itd = DetectU8Parse("   8 ");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->mode == DETECT_UINT_EQ);
@@ -298,7 +280,7 @@ static int DetectITypeParseTest05(void)
 static int DetectITypeParseTest06(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "  >  8  ");
+    itd = DetectU8Parse("  >  8  ");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->mode == DETECT_UINT_GT);
@@ -314,7 +296,7 @@ static int DetectITypeParseTest06(void)
 static int DetectITypeParseTest07(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "  8  <> 20  ");
+    itd = DetectU8Parse("  8  <> 20  ");
     FAIL_IF_NULL(itd);
     FAIL_IF_NOT(itd->arg1 == 8);
     FAIL_IF_NOT(itd->arg2 == 20);
@@ -330,9 +312,8 @@ static int DetectITypeParseTest07(void)
 static int DetectITypeParseTest08(void)
 {
     DetectU8Data *itd = NULL;
-    itd = DetectITypeParse(NULL, "> 8 <> 20");
+    itd = DetectU8Parse("> 8 <> 20");
     FAIL_IF_NOT_NULL(itd);
-    DetectITypeFree(NULL, itd);
 
     PASS;
 }

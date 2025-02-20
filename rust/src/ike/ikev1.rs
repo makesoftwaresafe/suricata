@@ -19,7 +19,7 @@
 
 use crate::applayer::*;
 use crate::common::to_hex;
-use crate::core::Direction;
+use crate::direction::Direction;
 use crate::ike::ike::{IKEState, IkeEvent};
 use crate::ike::parser::*;
 use nom7::Err;
@@ -53,7 +53,7 @@ impl Ikev1ParticipantData {
     }
 
     pub fn update(
-        &mut self, key_exchange: &str, nonce: &str, transforms: &Vec<Vec<SaAttribute>>,
+        &mut self, key_exchange: &str, nonce: &str, transforms: &[Vec<SaAttribute>],
     ) {
         self.key_exchange = key_exchange.to_string();
         self.nonce = nonce.to_string();

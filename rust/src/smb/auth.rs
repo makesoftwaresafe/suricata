@@ -1,4 +1,4 @@
-/* Copyright (C) 2018 Open Information Security Foundation
+/* Copyright (C) 2018-2024 Open Information Security Foundation
  *
  * You can copy, redistribute or modify this Program under the terms of
  * the GNU General Public License version 2 as published by the Free
@@ -21,12 +21,12 @@ use crate::smb::ntlmssp_records::*;
 use crate::smb::smb::*;
 
 use nom7::{Err, IResult};
-use der_parser6::ber::BerObjectContent;
-use der_parser6::der::{parse_der_oid, parse_der_sequence};
+use der_parser::ber::BerObjectContent;
+use der_parser::der::{parse_der_oid, parse_der_sequence};
 
 fn parse_secblob_get_spnego(blob: &[u8]) -> IResult<&[u8], &[u8], SecBlobError>
 {
-    let (rem, base_o) = der_parser6::parse_der(blob).map_err(Err::convert)?;
+    let (rem, base_o) = der_parser::parse_der(blob).map_err(Err::convert)?;
     SCLogDebug!("parse_secblob_get_spnego: base_o {:?}", base_o);
     let d = match base_o.content.as_slice() {
         Err(_) => { return Err(Err::Error(SecBlobError::NotSpNego)); },
@@ -59,7 +59,7 @@ fn parse_secblob_get_spnego(blob: &[u8]) -> IResult<&[u8], &[u8], SecBlobError>
 
 fn parse_secblob_spnego_start(blob: &[u8]) -> IResult<&[u8], &[u8], SecBlobError>
 {
-    let (rem, o) = der_parser6::parse_der(blob).map_err(Err::convert)?;
+    let (rem, o) = der_parser::parse_der(blob).map_err(Err::convert)?;
     let d = match o.content.as_slice() {
         Ok(d) => {
             SCLogDebug!("d: next data len {}",d.len());
@@ -96,7 +96,7 @@ fn parse_secblob_spnego(blob: &[u8]) -> Option<SpnegoRequest>
             Ok(s) => s,
             _ => { continue; },
         };
-        let o = match der_parser6::parse_der(n) {
+        let o = match der_parser::parse_der(n) {
             Ok((_,x)) => x,
             _ => { continue; },
         };
@@ -105,21 +105,20 @@ fn parse_secblob_spnego(blob: &[u8]) -> Option<SpnegoRequest>
             BerObjectContent::Sequence(ref seq) => {
                 for se in seq {
                     SCLogDebug!("SEQ {:?}", se);
-                    match se.content {
-                        BerObjectContent::OID(ref oid) => {
-                            SCLogDebug!("OID {:?}", oid);
-                            match oid.to_string().as_str() {
-                                "1.2.840.48018.1.2.2" => { SCLogDebug!("Microsoft Kerberos 5"); },
-                                "1.2.840.113554.1.2.2" => { SCLogDebug!("Kerberos 5"); have_kerberos = true; },
-                                "1.2.840.113554.1.2.2.1" => { SCLogDebug!("krb5-name"); },
-                                "1.2.840.113554.1.2.2.2" => { SCLogDebug!("krb5-principal"); },
-                                "1.2.840.113554.1.2.2.3" => { SCLogDebug!("krb5-user-to-user-mech"); },
-                                "1.3.6.1.4.1.311.2.2.10" => { SCLogDebug!("NTLMSSP"); have_ntlmssp = true; },
-                                "1.3.6.1.4.1.311.2.2.30" => { SCLogDebug!("NegoEx"); },
-                                _ => { SCLogDebug!("unexpected OID {:?}", oid); },
-                            }
-                        },
-                        _ => { SCLogDebug!("expected OID, got {:?}", se); },
+                    if let BerObjectContent::OID(ref oid) = se.content {
+                        SCLogDebug!("OID {:?}", oid);
+                        match oid.to_string().as_str() {
+                            "1.2.840.48018.1.2.2" => { SCLogDebug!("Microsoft Kerberos 5"); },
+                            "1.2.840.113554.1.2.2" => { SCLogDebug!("Kerberos 5"); have_kerberos = true; },
+                            "1.2.840.113554.1.2.2.1" => { SCLogDebug!("krb5-name"); },
+                            "1.2.840.113554.1.2.2.2" => { SCLogDebug!("krb5-principal"); },
+                            "1.2.840.113554.1.2.2.3" => { SCLogDebug!("krb5-user-to-user-mech"); },
+                            "1.3.6.1.4.1.311.2.2.10" => { SCLogDebug!("NTLMSSP"); have_ntlmssp = true; },
+                            "1.3.6.1.4.1.311.2.2.30" => { SCLogDebug!("NegoEx"); },
+                            _ => { SCLogDebug!("unexpected OID {:?}", oid); },
+                        }
+                    } else {
+                        SCLogDebug!("expected OID, got {:?}", se);
                     }
                 }
             },

@@ -21,8 +21,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __FLOW_PRIVATE_H__
-#define __FLOW_PRIVATE_H__
+#ifndef SURICATA_FLOW_PRIVATE_H
+#define SURICATA_FLOW_PRIVATE_H
 
 #include "flow-hash.h"
 #include "flow-queue.h"
@@ -74,7 +74,7 @@ enum {
     FLOW_PROTO_MAX,
 };
 /* max used in app-layer (counters) */
-#define FLOW_PROTO_APPLAYER_MAX FLOW_PROTO_UDP + 1
+#define FLOW_PROTO_APPLAYER_MAX (FLOW_PROTO_UDP + 1)
 
 /*
  * Variables
@@ -178,4 +178,4 @@ static inline uint32_t FlowGetTimeoutPolicy(const Flow *f)
     }
     return timeout;
 }
-#endif /* __FLOW_PRIVATE_H__ */
+#endif /* SURICATA_FLOW_PRIVATE_H */

@@ -315,27 +315,6 @@ int SCLogMatchFGFilterBL(const char *file, const char *function, int line)
 }
 
 /**
- * \brief Adds a Whitelist(WL) fine-grained(FG) filter.  A FG filter WL filter
- *        allows messages that match this filter, to be logged, while the filter
- *        is defined using a file_name, function_name and line_number.
- *
- *        If a particular parameter in the fg-filter(file, function and line),
- *        shouldn't be considered while logging the message, one can supply
- *        NULL for the file_name or function_name and a negative line_no.
- *
- * \param file     File_name of the filter
- * \param function Function_name of the filter
- * \param line     Line number of the filter
- *
- * \retval  0 on successfully adding the filter;
- * \retval -1 on failure
- */
-int SCLogAddFGFilterWL(const char *file, const char *function, int line)
-{
-    return SCLogAddFGFilter(file, function, line, SC_LOG_FILTER_WL);
-}
-
-/**
  * \brief Adds a Blacklist(BL) fine-grained(FG) filter.  A FG filter BL filter
  *        allows messages that don't match this filter, to be logged, while the
  *        filter is defined using a file_name, function_name and line_number
@@ -399,8 +378,6 @@ void SCLogReleaseFGFilters(void)
         SCMutexUnlock(&sc_log_fg_filters_m[i]);
         sc_log_fg_filters[i] = NULL;
     }
-
-    return;
 }
 
 /**
@@ -649,8 +626,6 @@ void SCLogCheckFDFilterExit(const char *function)
 
     if (thread_list != NULL)
         thread_list->entered--;
-
-    return;
 }
 
 /**
@@ -736,9 +711,7 @@ void SCLogReleaseFDFilters(void)
 
     sc_log_fd_filters = NULL;
 
-    SCMutexUnlock( &sc_log_fd_filters_m );
-
-    return;
+    SCMutexUnlock(&sc_log_fd_filters_m);
 }
 
 /**
@@ -895,8 +868,6 @@ void SCLogAddToFGFFileList(SCLogFGFilterFile *fgf_file,
         sc_log_fg_filters[listtype] = fgf_file_temp;
     else
         fgf_file->next = fgf_file_temp;
-
-    return;
 }
 
 /**
@@ -942,8 +913,6 @@ void SCLogAddToFGFFuncList(SCLogFGFilterFile *fgf_file,
         fgf_file->func = fgf_func_temp;
     else
         fgf_func->next = fgf_func_temp;
-
-    return;
 }
 
 /**
@@ -976,8 +945,6 @@ void SCLogAddToFGFLineList(SCLogFGFilterFunc *fgf_func,
         fgf_func->line = fgf_line_temp;
     else
         fgf_line->next = fgf_line_temp;
-
-    return;
 }
 
 /**
@@ -992,7 +959,4 @@ void SCLogReleaseFDFilter(SCLogFDFilter *fdf)
             SCFree(fdf->func);
         SCFree(fdf);
     }
-
-    return;
 }
-

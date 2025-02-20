@@ -61,7 +61,6 @@
 #include "output-json-email-common.h"
 #include "output-json-nfs.h"
 #include "output-json-smb.h"
-#include "output-json-http2.h"
 
 #include "app-layer-htp.h"
 #include "app-layer-htp-xff.h"
@@ -214,8 +213,8 @@ JsonBuilder *JsonBuildFileInfoRecord(const Packet *p, const File *ff, void *tx,
  *  \internal
  *  \brief Write meta data on a single line json record
  */
-static void FileWriteJsonRecord(JsonFileLogThread *aft, const Packet *p, const File *ff, void *tx,
-        const uint64_t tx_id, uint8_t dir, OutputJsonCtx *eve_ctx)
+static void FileWriteJsonRecord(ThreadVars *tv, JsonFileLogThread *aft, const Packet *p,
+        const File *ff, void *tx, const uint64_t tx_id, uint8_t dir, OutputJsonCtx *eve_ctx)
 {
     HttpXFFCfg *xff_cfg = aft->filelog_ctx->xff_cfg != NULL ? aft->filelog_ctx->xff_cfg
                                                             : aft->filelog_ctx->parent_xff_cfg;
@@ -224,7 +223,7 @@ static void FileWriteJsonRecord(JsonFileLogThread *aft, const Packet *p, const F
         return;
     }
 
-    OutputJsonBuilderBuffer(js, aft->ctx);
+    OutputJsonBuilderBuffer(tv, p, p->flow, js, aft->ctx);
     jb_free(js);
 }
 
@@ -238,7 +237,7 @@ static int JsonFileLogger(ThreadVars *tv, void *thread_data, const Packet *p, co
 
     SCLogDebug("ff %p", ff);
 
-    FileWriteJsonRecord(aft, p, ff, tx, tx_id, dir, aft->filelog_ctx->eve_ctx);
+    FileWriteJsonRecord(tv, aft, p, ff, tx, tx_id, dir, aft->filelog_ctx->eve_ctx);
     return 0;
 }
 
@@ -353,7 +352,6 @@ static OutputInitResult OutputFileLogInitSub(ConfNode *conf, OutputCtx *parent_c
 void JsonFileLogRegister (void)
 {
     /* register as child of eve-log */
-    OutputRegisterFileSubModule(LOGGER_JSON_FILE, "eve-log", "JsonFileLog",
-        "eve-log.files", OutputFileLogInitSub, JsonFileLogger,
-        JsonFileLogThreadInit, JsonFileLogThreadDeinit, NULL);
+    OutputRegisterFileSubModule(LOGGER_JSON_FILE, "eve-log", "JsonFileLog", "eve-log.files",
+            OutputFileLogInitSub, JsonFileLogger, JsonFileLogThreadInit, JsonFileLogThreadDeinit);
 }

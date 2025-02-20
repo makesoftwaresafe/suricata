@@ -23,8 +23,8 @@
  * Stats Logger Output registration functions
  */
 
-#ifndef __OUTPUT_STATS_H__
-#define __OUTPUT_STATS_H__
+#ifndef SURICATA_OUTPUT_STATS_H
+#define SURICATA_OUTPUT_STATS_H
 
 #include "tm-modules.h"
 
@@ -49,9 +49,8 @@ TmEcode OutputStatsLog(ThreadVars *tv, void *thread_data, StatsTable *st);
 
 typedef int (*StatsLogger)(ThreadVars *, void *thread_data, const StatsTable *);
 
-int OutputRegisterStatsLogger(const char *name, StatsLogger LogFunc,
-    OutputCtx *, ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit,
-    ThreadExitPrintStatsFunc ThreadExitPrintStats);
+int OutputRegisterStatsLogger(const char *name, StatsLogger LogFunc, OutputCtx *,
+        ThreadInitFunc ThreadInit, ThreadDeinitFunc ThreadDeinit);
 
 void TmModuleStatsLoggerRegister (void);
 
@@ -59,4 +58,4 @@ int OutputStatsLoggersRegistered(void);
 
 void OutputStatsShutdown(void);
 
-#endif /* __OUTPUT_STATS_H__ */
+#endif /* SURICATA_OUTPUT_STATS_H */

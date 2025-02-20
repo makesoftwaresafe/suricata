@@ -7,6 +7,10 @@ on:
   push:
     branches: [ master ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Declare default permissions as read only.
 permissions: read-all
 
@@ -17,39 +21,36 @@ jobs:
     permissions:
       # Needed to upload the results to code-scanning dashboard.
       security-events: write
-      actions: read
-      contents: read
+      id-token: write
 
     steps:
       - name: "Checkout code"
-        uses: actions/checkout@v3.5.3
-        with:
-          persist-credentials: false
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: "Run analysis"
-        uses: ossf/scorecard-action@e38b1902ae4f44df626f11ba0734b14fb91f8f86 # v1.0.1
+        uses: ossf/scorecard-action@62b2cac7ed8198b15735ed49ab1e5cf35480ba46 # v2.4.0
         with:
           results_file: results.sarif
           results_format: sarif
-          # Read-only PAT token. To create it,
-          # follow the steps in https://github.com/ossf/scorecard-action#pat-token-creation.
           repo_token: ${{ secrets.SCORECARD_READ_TOKEN }}
-          # Publish the results to enable scorecard badges. For more details, see
-          # https://github.com/ossf/scorecard-action#publishing-results.
-          # For private repositories, `publish_results` will automatically be set to `false`,
-          # regardless of the value entered here.
+          # Scorecard team runs a weekly scan of public GitHub repos,
+          # see https://github.com/ossf/scorecard#public-data.
+          # Setting `publish_results: true` helps us scale by leveraging your workflow to
+          # extract the results instead of relying on our own infrastructure to run scans.
+          # And it's free for you!
           publish_results: true
 
-      # Upload the results as artifacts (optional).
+      # https://docs.github.com/en/actions/advanced-guides/storing-workflow-data-as-artifacts
+      # Optional.
       - name: "Upload artifact"
-        uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.1.2
         with:
           name: SARIF file
           path: results.sarif
           retention-days: 5
 
       # Upload the results to GitHub's code scanning dashboard.
-      - name: "Upload to code-scanning"
-        uses: github/codeql-action/upload-sarif@v2 # v1.0.26
+      - name: "Upload SARIF results"
+        uses: github/codeql-action/upload-sarif@0701025a8b1600e416be4f3bb5a830b1aa6af01e # v1
         with:
           sarif_file: results.sarif

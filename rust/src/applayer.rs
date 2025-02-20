@@ -18,16 +18,18 @@
 //! Parser registration functions and common interface module.
 
 use std;
-use crate::core::{self,DetectEngineState,Flow,AppLayerEventType,AppProto,Direction};
+use crate::core::{self,DetectEngineState,AppLayerEventType};
+use crate::direction::Direction;
 use crate::filecontainer::FileContainer;
+use crate::flow::Flow;
 use std::os::raw::{c_void,c_char,c_int};
-use crate::core::SC;
 use std::ffi::CStr;
 use crate::core::StreamingBufferConfig;
 
 // Make the AppLayerEvent derive macro available to users importing
 // AppLayerEvent from this module.
 pub use suricata_derive::AppLayerEvent;
+use suricata_sys::sys::AppProto;
 
 #[repr(C)]
 pub struct StreamSlice {
@@ -58,6 +60,9 @@ impl StreamSlice {
         self.input_len
     }
     pub fn as_slice(&self) -> &[u8] {
+        if self.input.is_null() && self.input_len == 0 {
+            return &[];
+        }
         unsafe { std::slice::from_raw_parts(self.input, self.input_len as usize) }
     }
     pub fn is_empty(&self) -> bool {
@@ -95,6 +100,12 @@ pub struct AppLayerTxData {
     /// config: log flags
     pub config: AppLayerTxConfig,
 
+    /// The tx has been updated and needs to be processed : detection, logging, cleaning
+    /// It can then be skipped until new data arrives.
+    /// There is a boolean for both directions : to server and to client
+    pub updated_tc: bool,
+    pub updated_ts: bool,
+
     /// logger flags for tx logging api
     logged: LoggerFlags,
 
@@ -111,6 +122,9 @@ pub struct AppLayerTxData {
     /// STREAM_TOCLIENT: file tx , files only in toclient dir
     /// STREAM_TOSERVER|STREAM_TOCLIENT: files possible in both dirs
     pub file_tx: u8,
+    /// Number of times this tx data has already been logged for signatures
+    /// not using application layer keywords
+    pub guessed_applayer_logged: u8,
 
     /// detection engine flags for use by detection engine
     detect_flags_ts: u64,
@@ -149,6 +163,9 @@ impl AppLayerTxData {
             files_stored: 0,
             file_flags: 0,
             file_tx: 0,
+            guessed_applayer_logged: 0,
+            updated_tc: true,
+            updated_ts: true,
             detect_flags_ts: 0,
             detect_flags_tc: 0,
             de_state: std::ptr::null_mut(),
@@ -159,9 +176,9 @@ impl AppLayerTxData {
     /// Create new AppLayerTxData for a transaction in a single
     /// direction.
     pub fn for_direction(direction: Direction) -> Self {
-        let (detect_flags_ts, detect_flags_tc) = match direction {
-            Direction::ToServer => (0, APP_LAYER_TX_SKIP_INSPECT_FLAG),
-            Direction::ToClient => (APP_LAYER_TX_SKIP_INSPECT_FLAG, 0),
+        let (detect_flags_ts, detect_flags_tc, updated_ts, updated_tc) = match direction {
+            Direction::ToServer => (0, APP_LAYER_TX_SKIP_INSPECT_FLAG, true, false),
+            Direction::ToClient => (APP_LAYER_TX_SKIP_INSPECT_FLAG, 0, false, true),
         };
         Self {
             config: AppLayerTxConfig::new(),
@@ -171,6 +188,9 @@ impl AppLayerTxData {
             files_stored: 0,
             file_flags: 0,
             file_tx: 0,
+            guessed_applayer_logged: 0,
+            updated_tc,
+            updated_ts,
             detect_flags_ts,
             detect_flags_tc,
             de_state: std::ptr::null_mut(),
@@ -193,16 +213,39 @@ impl AppLayerTxData {
     pub fn update_file_flags(&mut self, state_flags: u16) {
         if (self.file_flags & state_flags) != state_flags {
             SCLogDebug!("updating tx file_flags {:04x} with state flags {:04x}", self.file_flags, state_flags);
-            self.file_flags |= state_flags;
+            let mut nf = state_flags;
+            // With keyword filestore:both,flow :
+            // There may be some opened unclosed file in one direction without filestore
+            // As such it has tx file_flags had FLOWFILE_NO_STORE_TS or TC
+            // But a new file in the other direction may trigger filestore:both,flow
+            // And thus set state_flags FLOWFILE_STORE_TS
+            // If the file was opened without storing it, do not try to store just the end of it
+            if (self.file_flags & FLOWFILE_NO_STORE_TS) != 0 && (state_flags & FLOWFILE_STORE_TS) != 0 {
+                nf &= !FLOWFILE_STORE_TS;
+            }
+            if (self.file_flags & FLOWFILE_NO_STORE_TC) != 0 && (state_flags & FLOWFILE_STORE_TC) != 0 {
+                nf &= !FLOWFILE_STORE_TC;
+            }
+            self.file_flags |= nf;
         }
     }
+}
+
+// need to keep in sync with C flow.h
+pub const FLOWFILE_NO_STORE_TS: u16 = BIT_U16!(2);
+pub const FLOWFILE_NO_STORE_TC: u16 = BIT_U16!(3);
+pub const FLOWFILE_STORE_TS: u16 = BIT_U16!(12);
+pub const FLOWFILE_STORE_TC: u16 = BIT_U16!(13);
+
+#[no_mangle]
+pub unsafe extern "C" fn SCTxDataUpdateFileFlags(txd: &mut AppLayerTxData, state_flags: u16) {
+    txd.update_file_flags(state_flags);
 }
 
 #[macro_export]
 macro_rules!export_tx_data_get {
     ($name:ident, $type:ty) => {
-        #[no_mangle]
-        pub unsafe extern "C" fn $name(tx: *mut std::os::raw::c_void)
+        unsafe extern "C" fn $name(tx: *mut std::os::raw::c_void)
             -> *mut $crate::applayer::AppLayerTxData
         {
             let tx = &mut *(tx as *mut $type);
@@ -228,8 +271,7 @@ impl AppLayerStateData {
 #[macro_export]
 macro_rules!export_state_data_get {
     ($name:ident, $type:ty) => {
-        #[no_mangle]
-        pub unsafe extern "C" fn $name(state: *mut std::os::raw::c_void)
+        unsafe extern "C" fn $name(state: *mut std::os::raw::c_void)
             -> *mut $crate::applayer::AppLayerStateData
         {
             let state = &mut *(state as *mut $type);
@@ -367,10 +409,6 @@ pub struct RustParser {
 
     pub flags: u32,
 
-    /// Function to handle the end of data coming on one of the sides
-    /// due to the stream reaching its 'depth' limit.
-    pub truncate: Option<TruncateFn>,
-
     pub get_frame_id_by_name: Option<GetFrameIdByName>,
     pub get_frame_name_by_id: Option<GetFrameNameById>,
 }
@@ -417,11 +455,11 @@ pub type StateTxFreeFn  = unsafe extern "C" fn (*mut c_void, u64);
 pub type StateGetTxFn            = unsafe extern "C" fn (*mut c_void, u64) -> *mut c_void;
 pub type StateGetTxCntFn         = unsafe extern "C" fn (*mut c_void) -> u64;
 pub type StateGetProgressFn = unsafe extern "C" fn (*mut c_void, u8) -> c_int;
-pub type GetEventInfoFn     = unsafe extern "C" fn (*const c_char, *mut c_int, *mut AppLayerEventType) -> c_int;
-pub type GetEventInfoByIdFn = unsafe extern "C" fn (c_int, *mut *const c_char, *mut AppLayerEventType) -> i8;
+pub type GetEventInfoFn     = unsafe extern "C" fn (*const c_char, event_id: *mut u8, *mut AppLayerEventType) -> c_int;
+pub type GetEventInfoByIdFn = unsafe extern "C" fn (event_id: u8, *mut *const c_char, *mut AppLayerEventType) -> c_int;
 pub type LocalStorageNewFn  = extern "C" fn () -> *mut c_void;
 pub type LocalStorageFreeFn = extern "C" fn (*mut c_void);
-pub type GetTxFilesFn       = unsafe extern "C" fn (*mut c_void, *mut c_void, u8) -> AppLayerGetFileState;
+pub type GetTxFilesFn       = unsafe extern "C" fn (*mut c_void, u8) -> AppLayerGetFileState;
 pub type GetTxIteratorFn    = unsafe extern "C" fn (ipproto: u8, alproto: AppProto,
                                              state: *mut c_void,
                                              min_tx_id: u64,
@@ -431,24 +469,23 @@ pub type GetTxIteratorFn    = unsafe extern "C" fn (ipproto: u8, alproto: AppPro
 pub type GetTxDataFn = unsafe extern "C" fn(*mut c_void) -> *mut AppLayerTxData;
 pub type GetStateDataFn = unsafe extern "C" fn(*mut c_void) -> *mut AppLayerStateData;
 pub type ApplyTxConfigFn = unsafe extern "C" fn (*mut c_void, *mut c_void, c_int, AppLayerTxConfig);
-pub type TruncateFn = unsafe extern "C" fn (*mut c_void, u8);
 pub type GetFrameIdByName = unsafe extern "C" fn(*const c_char) -> c_int;
 pub type GetFrameNameById = unsafe extern "C" fn(u8) -> *const c_char;
 
 
 // Defined in app-layer-register.h
+/// cbindgen:ignore
 extern {
     pub fn AppLayerRegisterProtocolDetection(parser: *const RustParser, enable_default: c_int) -> AppProto;
     pub fn AppLayerRegisterParserAlias(parser_name: *const c_char, alias_name: *const c_char);
+    pub fn AppLayerRegisterParser(parser: *const RustParser, alproto: AppProto) -> c_int;
 }
 
-#[allow(non_snake_case)]
-pub unsafe fn AppLayerRegisterParser(parser: *const RustParser, alproto: AppProto) -> c_int {
-    (SC.unwrap().AppLayerRegisterParser)(parser, alproto)
-}
 
 // Defined in app-layer-detect-proto.h
+/// cbindgen:ignore
 extern {
+    pub fn AppLayerForceProtocolChange(f: *const Flow, new_proto: AppProto);
     pub fn AppLayerProtoDetectPPRegister(ipproto: u8, portstr: *const c_char, alproto: AppProto,
                                          min_depth: u16, max_depth: u16, dir: u8,
                                          pparser1: ProbeFn, pparser2: ProbeFn);
@@ -456,6 +493,9 @@ extern {
                                                alproto_name: *const c_char, alproto: AppProto,
                                                min_depth: u16, max_depth: u16,
                                                pparser_ts: ProbeFn, pparser_tc: ProbeFn) -> i32;
+    pub fn AppLayerProtoDetectPMRegisterPatternCI(ipproto: u8, alproto: AppProto,
+                                                pattern: *const c_char, depth: u16,
+                                                offset: u16, direction: u8) -> c_int;
     pub fn AppLayerProtoDetectPMRegisterPatternCS(ipproto: u8, alproto: AppProto,
                                                   pattern: *const c_char, depth: u16,
                                                   offset: u16, direction: u8) -> c_int;
@@ -475,18 +515,19 @@ pub const APP_LAYER_PARSER_NO_INSPECTION_PAYLOAD : u16 = BIT_U16!(3);
 pub const APP_LAYER_PARSER_BYPASS_READY : u16 = BIT_U16!(4);
 pub const APP_LAYER_PARSER_EOF_TS : u16 = BIT_U16!(5);
 pub const APP_LAYER_PARSER_EOF_TC : u16 = BIT_U16!(6);
-pub const APP_LAYER_PARSER_TRUNC_TS : u16 = BIT_U16!(7);
-pub const APP_LAYER_PARSER_TRUNC_TC : u16 = BIT_U16!(8);
 
 pub const APP_LAYER_PARSER_OPT_ACCEPT_GAPS: u32 = BIT_U32!(0);
 
 pub const APP_LAYER_TX_SKIP_INSPECT_FLAG: u64 = BIT_U64!(62);
 
+/// cbindgen:ignore
 extern {
     pub fn AppLayerParserStateSetFlag(state: *mut c_void, flag: u16);
     pub fn AppLayerParserStateIssetFlag(state: *mut c_void, flag: u16) -> u16;
     pub fn AppLayerParserSetStreamDepth(ipproto: u8, alproto: AppProto, stream_depth: u32);
     pub fn AppLayerParserConfParserEnabled(ipproto: *const c_char, proto: *const c_char) -> c_int;
+    pub fn AppLayerParserRegisterLogger(pproto: u8, alproto: AppProto);
+    pub fn AppLayerParserRegisterParserAcceptableDataDirection(ipproto: u8, alproto: AppProto, dir: u8);
 }
 
 #[repr(C)]
@@ -536,7 +577,7 @@ impl LoggerFlags {
 /// derive AppLayerEvent.
 pub trait AppLayerEvent {
     /// Return the enum variant of the given ID.
-    fn from_id(id: i32) -> Option<Self> where Self: std::marker::Sized;
+    fn from_id(id: u8) -> Option<Self> where Self: std::marker::Sized;
 
     /// Convert the enum variant to a C-style string (suffixed with \0).
     fn to_cstring(&self) -> &str;
@@ -545,19 +586,19 @@ pub trait AppLayerEvent {
     fn from_string(s: &str) -> Option<Self> where Self: std::marker::Sized;
 
     /// Return the ID value of the enum variant.
-    fn as_i32(&self) -> i32;
+    fn as_u8(&self) -> u8;
 
     unsafe extern "C" fn get_event_info(
         event_name: *const std::os::raw::c_char,
-        event_id: *mut std::os::raw::c_int,
+        event_id: *mut u8,
         event_type: *mut core::AppLayerEventType,
     ) -> std::os::raw::c_int;
 
     unsafe extern "C" fn get_event_info_by_id(
-        event_id: std::os::raw::c_int,
+        event_id: u8,
         event_name: *mut *const std::os::raw::c_char,
         event_type: *mut core::AppLayerEventType,
-    ) -> i8;
+    ) -> std::os::raw::c_int;
 }
 
 /// Generic `get_info_info` implementation for enums implementing
@@ -578,7 +619,7 @@ pub trait AppLayerEvent {
 #[inline(always)]
 pub unsafe fn get_event_info<T: AppLayerEvent>(
     event_name: *const std::os::raw::c_char,
-    event_id: *mut std::os::raw::c_int,
+    event_id: *mut u8,
     event_type: *mut core::AppLayerEventType,
 ) -> std::os::raw::c_int {
     if event_name.is_null() {
@@ -586,11 +627,13 @@ pub unsafe fn get_event_info<T: AppLayerEvent>(
     }
 
     let event = match CStr::from_ptr(event_name).to_str().map(T::from_string) {
-        Ok(Some(event)) => event.as_i32(),
-        _ => -1,
+        Ok(Some(event)) => event.as_u8(),
+        _ => {
+            return -1;
+        }
     };
     *event_type = core::AppLayerEventType::APP_LAYER_EVENT_TYPE_TRANSACTION;
-    *event_id = event as std::os::raw::c_int;
+    *event_id = event;
     return 0;
 }
 
@@ -598,10 +641,10 @@ pub unsafe fn get_event_info<T: AppLayerEvent>(
 /// AppLayerEvent.
 #[inline(always)]
 pub unsafe fn get_event_info_by_id<T: AppLayerEvent>(
-    event_id: std::os::raw::c_int,
+    event_id: u8,
     event_name: *mut *const std::os::raw::c_char,
     event_type: *mut core::AppLayerEventType,
-) -> i8 {
+) -> std::os::raw::c_int {
     if let Some(e) = T::from_id(event_id) {
         *event_name = e.to_cstring().as_ptr() as *const std::os::raw::c_char;
         *event_type = core::AppLayerEventType::APP_LAYER_EVENT_TYPE_TRANSACTION;

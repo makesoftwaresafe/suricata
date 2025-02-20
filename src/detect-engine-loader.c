@@ -32,7 +32,6 @@
 #include "threadvars.h"
 #include "tm-threads.h"
 #include "queue.h"
-#include "util-signal.h"
 
 #include "detect-engine-loader.h"
 #include "detect-engine-build.h"
@@ -122,6 +121,7 @@ static int DetectLoadSigFile(
 
     (*goodsigs) = 0;
     (*badsigs) = 0;
+    (*skippedsigs) = 0;
 
     FILE *fp = fopen(sig_file, "r");
     if (fp == NULL) {
@@ -167,7 +167,6 @@ static int DetectLoadSigFile(
         sig = DetectEngineAppendSig(de_ctx, line);
         if (sig != NULL) {
             if (rule_engine_analysis_set || fp_engine_analysis_set) {
-                RetrieveFPForSig(de_ctx, sig);
                 if (fp_engine_analysis_set) {
                     EngineAnalysisFP(de_ctx, sig, line);
                 }
@@ -303,7 +302,7 @@ int SigLoadSignatures(DetectEngineCtx *de_ctx, char *sig_file, bool sig_file_exc
                 de_ctx->config_prefix);
     }
 
-    if (RunmodeGetCurrent() == RUNMODE_ENGINE_ANALYSIS) {
+    if (SCRunmodeGet() == RUNMODE_ENGINE_ANALYSIS) {
         SetupEngineAnalysis(de_ctx, &fp_engine_analysis_set, &rule_engine_analysis_set);
     }
 
@@ -404,7 +403,7 @@ int SigLoadSignatures(DetectEngineCtx *de_ctx, char *sig_file, bool sig_file_exc
 
  end:
     gettimeofday(&de_ctx->last_reload, NULL);
-    if (RunmodeGetCurrent() == RUNMODE_ENGINE_ANALYSIS) {
+    if (SCRunmodeGet() == RUNMODE_ENGINE_ANALYSIS) {
         CleanupEngineAnalysis(de_ctx);
     }
 
@@ -468,6 +467,12 @@ int DetectLoadersSync(void)
                 done = true;
             }
             SCMutexUnlock(&loader->m);
+            if (!done) {
+                /* nudge thread in case it's sleeping */
+                SCCtrlMutexLock(loader->tv->ctrl_mutex);
+                pthread_cond_broadcast(loader->tv->ctrl_cond);
+                SCCtrlMutexUnlock(loader->tv->ctrl_mutex);
+            }
         }
         SCMutexLock(&loader->m);
         if (loader->result != 0) {
@@ -523,7 +528,9 @@ static void TmThreadWakeupDetectLoaderThreads(void)
         while (tv != NULL) {
             if (strncmp(tv->name,"DL#",3) == 0) {
                 BUG_ON(tv->ctrl_cond == NULL);
+                SCCtrlMutexLock(tv->ctrl_mutex);
                 pthread_cond_broadcast(tv->ctrl_cond);
+                SCCtrlMutexUnlock(tv->ctrl_mutex);
             }
             tv = tv->next;
         }
@@ -567,6 +574,9 @@ static TmEcode DetectLoaderThreadInit(ThreadVars *t, const void *initdata, void 
     /* pass thread data back to caller */
     *data = ftd;
 
+    DetectLoaderControl *loader = &loaders[ftd->instance];
+    loader->tv = t;
+
     return TM_ECODE_OK;
 }
 
@@ -584,14 +594,8 @@ static TmEcode DetectLoader(ThreadVars *th_v, void *thread_data)
 
     TmThreadsSetFlag(th_v, THV_INIT_DONE | THV_RUNNING);
     SCLogDebug("loader thread started");
-    while (1)
-    {
-        if (TmThreadsCheckFlag(th_v, THV_PAUSE)) {
-            TmThreadsSetFlag(th_v, THV_PAUSED);
-            TmThreadTestThreadUnPaused(th_v);
-            TmThreadsUnsetFlag(th_v, THV_PAUSED);
-        }
-
+    bool run = TmThreadsWaitForUnpause(th_v);
+    while (run) {
         /* see if we have tasks */
 
         DetectLoaderControl *loader = &loaders[ftd->instance];

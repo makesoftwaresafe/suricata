@@ -23,8 +23,8 @@
  * Host wrapper around storage api
  */
 
-#ifndef __HOST_STORAGE_H__
-#define __HOST_STORAGE_H__
+#ifndef SURICATA_HOST_STORAGE_H
+#define SURICATA_HOST_STORAGE_H
 
 #include "host.h"
 
@@ -38,7 +38,6 @@ void *HostGetStorageById(Host *h, HostStorageId id);
 int HostSetStorageById(Host *h, HostStorageId id, void *ptr);
 void *HostAllocStorageById(Host *h, HostStorageId id);
 
-void HostFreeStorageById(Host *h, HostStorageId id);
 void HostFreeStorage(Host *h);
 
 void RegisterHostStorageTests(void);
@@ -46,4 +45,4 @@ void RegisterHostStorageTests(void);
 HostStorageId HostStorageRegister(const char *name, const unsigned int size,
         void *(*Alloc)(unsigned int), void (*Free)(void *));
 
-#endif /* __HOST_STORAGE_H__ */
+#endif /* SURICATA_HOST_STORAGE_H */

@@ -49,7 +49,7 @@
  * \retval 1 If a < b.
  * \retval 0 Otherwise, i.e. a >= b.
  */
-int AddressIPv6Lt(Address *a, Address *b)
+int AddressIPv6Lt(const Address *a, const Address *b)
 {
     int i = 0;
 
@@ -87,7 +87,7 @@ int AddressIPv6LtU32(uint32_t *a, uint32_t *b)
  * \retval 1 If a > b.
  * \retval 0 Otherwise, i.e. a <= b.
  */
-int AddressIPv6Gt(Address *a, Address *b)
+int AddressIPv6Gt(const Address *a, const Address *b)
 {
     int i = 0;
 
@@ -125,7 +125,7 @@ int AddressIPv6GtU32(uint32_t *a, uint32_t *b)
  * \retval 1 If a == b.
  * \retval 0 Otherwise.
  */
-int AddressIPv6Eq(Address *a, Address *b)
+int AddressIPv6Eq(const Address *a, const Address *b)
 {
     int i = 0;
 
@@ -159,7 +159,7 @@ int AddressIPv6EqU32(uint32_t *a, uint32_t *b)
  * \retval 1 If a <= b.
  * \retval 0 Otherwise, i.e. a > b.
  */
-int AddressIPv6Le(Address *a, Address *b)
+int AddressIPv6Le(const Address *a, const Address *b)
 {
 
     if (AddressIPv6Eq(a, b) == 1)
@@ -191,7 +191,7 @@ int AddressIPv6LeU32(uint32_t *a, uint32_t *b)
  * \retval 1 If a >= b.
  * \retval 0 Otherwise, i.e. a < b.
  */
-int AddressIPv6Ge(Address *a, Address *b)
+int AddressIPv6Ge(const Address *a, const Address *b)
 {
 
     if (AddressIPv6Eq(a, b) == 1)
@@ -296,8 +296,6 @@ static void AddressCutIPv6CopySubOne(uint32_t *a, uint32_t *b)
     b[1] = htonl(b[1]);
     b[2] = htonl(b[2]);
     b[3] = htonl(b[3]);
-
-    return;
 }
 
 /**
@@ -334,8 +332,6 @@ static void AddressCutIPv6CopyAddOne(uint32_t *a, uint32_t *b)
     b[1] = htonl(b[1]);
     b[2] = htonl(b[2]);
     b[3] = htonl(b[3]);
-
-    return;
 }
 
 /**
@@ -352,8 +348,6 @@ static void AddressCutIPv6Copy(uint32_t *a, uint32_t *b)
     b[1] = htonl(a[1]);
     b[2] = htonl(a[2]);
     b[3] = htonl(a[3]);
-
-    return;
 }
 
 int DetectAddressCutIPv6(DetectEngineCtx *de_ctx, DetectAddress *a,
@@ -1922,6 +1916,4 @@ void DetectAddressIPv6Tests(void)
     UtRegisterTest("AddressTestIPv6CutNot04", AddressTestIPv6CutNot04);
     UtRegisterTest("AddressTestIPv6CutNot05", AddressTestIPv6CutNot05);
 #endif /* UNITTESTS */
-
-    return;
 }

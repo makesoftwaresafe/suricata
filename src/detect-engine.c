@@ -63,6 +63,8 @@
 
 #include "detect-engine-loader.h"
 
+#include "detect-engine-alert.h"
+
 #include "util-classification-config.h"
 #include "util-reference-config.h"
 #include "util-threshold-config.h"
@@ -108,6 +110,7 @@ static DetectEnginePktInspectionEngine *g_pkt_inspect_engines = NULL;
 static DetectEngineFrameInspectionEngine *g_frame_inspect_engines = NULL;
 
 // clang-format off
+// rule types documentation tag start: SignatureProperties
 const struct SignatureProperties signature_properties[SIG_TYPE_MAX] = {
     /* SIG_TYPE_NOT_SET */      { SIG_PROP_FLOW_ACTION_PACKET, },
     /* SIG_TYPE_IPONLY */       { SIG_PROP_FLOW_ACTION_FLOW, },
@@ -120,6 +123,7 @@ const struct SignatureProperties signature_properties[SIG_TYPE_MAX] = {
     /* SIG_TYPE_APPLAYER */     { SIG_PROP_FLOW_ACTION_FLOW, },
     /* SIG_TYPE_APP_TX */       { SIG_PROP_FLOW_ACTION_FLOW, },
 };
+// rule types documentation tag end: SignatureProperties
 // clang-format on
 
 /** \brief register inspect engine at start up time
@@ -166,55 +170,9 @@ void DetectPktInspectEngineRegister(const char *name,
 /** \brief register inspect engine at start up time
  *
  *  \note errors are fatal */
-void DetectFrameInspectEngineRegister(const char *name, int dir,
-        InspectionBufferFrameInspectFunc Callback, AppProto alproto, uint8_t type)
-{
-    DetectBufferTypeRegister(name);
-    const int sm_list = DetectBufferTypeGetByName(name);
-    if (sm_list == -1) {
-        FatalError("failed to register inspect engine %s", name);
-    }
-
-    if ((sm_list < DETECT_SM_LIST_MATCH) || (sm_list >= SHRT_MAX) || (Callback == NULL)) {
-        SCLogError("Invalid arguments");
-        BUG_ON(1);
-    }
-
-    uint8_t direction;
-    if (dir == SIG_FLAG_TOSERVER) {
-        direction = 0;
-    } else {
-        direction = 1;
-    }
-
-    DetectEngineFrameInspectionEngine *new_engine = SCCalloc(1, sizeof(*new_engine));
-    if (unlikely(new_engine == NULL)) {
-        FatalError("failed to register inspect engine %s: %s", name, strerror(errno));
-    }
-    new_engine->sm_list = (uint16_t)sm_list;
-    new_engine->sm_list_base = (uint16_t)sm_list;
-    new_engine->dir = direction;
-    new_engine->v1.Callback = Callback;
-    new_engine->alproto = alproto;
-    new_engine->type = type;
-
-    if (g_frame_inspect_engines == NULL) {
-        g_frame_inspect_engines = new_engine;
-    } else {
-        DetectEngineFrameInspectionEngine *t = g_frame_inspect_engines;
-        while (t->next != NULL) {
-            t = t->next;
-        }
-
-        t->next = new_engine;
-    }
-}
-
-/** \brief register inspect engine at start up time
- *
- *  \note errors are fatal */
-void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uint32_t dir,
-        int progress, InspectEngineFuncPtr Callback, InspectionBufferGetDataPtr GetData)
+static void AppLayerInspectEngineRegisterInternal(const char *name, AppProto alproto, uint32_t dir,
+        int progress, InspectEngineFuncPtr Callback, InspectionBufferGetDataPtr GetData,
+        InspectionMultiBufferGetDataPtr GetMultiData)
 {
     BUG_ON(progress >= 48);
 
@@ -225,7 +183,7 @@ void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uin
     }
     SCLogDebug("name %s id %d", name, sm_list);
 
-    if ((alproto >= ALPROTO_FAILED) || (!(dir == SIG_FLAG_TOSERVER || dir == SIG_FLAG_TOCLIENT)) ||
+    if ((alproto == ALPROTO_FAILED) || (!(dir == SIG_FLAG_TOSERVER || dir == SIG_FLAG_TOCLIENT)) ||
             (sm_list < DETECT_SM_LIST_MATCH) || (sm_list >= SHRT_MAX) ||
             (progress < 0 || progress >= SHRT_MAX) || (Callback == NULL)) {
         SCLogError("Invalid arguments");
@@ -234,6 +192,10 @@ void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uin
         SCLogError("Invalid arguments: must register "
                    "GetData with DetectEngineInspectBufferGeneric");
         BUG_ON(1);
+    } else if (Callback == DetectEngineInspectMultiBufferGeneric && GetMultiData == NULL) {
+        SCLogError("Invalid arguments: must register "
+                   "GetData with DetectEngineInspectMultiBufferGeneric");
+        BUG_ON(1);
     }
 
     uint8_t direction;
@@ -241,6 +203,11 @@ void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uin
         direction = 0;
     } else {
         direction = 1;
+    }
+    // every DNS or HTTP2 can be accessed from DOH2
+    if (alproto == ALPROTO_HTTP2 || alproto == ALPROTO_DNS) {
+        AppLayerInspectEngineRegisterInternal(
+                name, ALPROTO_DOH2, dir, progress, Callback, GetData, GetMultiData);
     }
 
     DetectEngineAppInspectionEngine *new_engine =
@@ -254,7 +221,11 @@ void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uin
     new_engine->sm_list_base = (uint16_t)sm_list;
     new_engine->progress = (int16_t)progress;
     new_engine->v2.Callback = Callback;
-    new_engine->v2.GetData = GetData;
+    if (Callback == DetectEngineInspectBufferGeneric) {
+        new_engine->v2.GetData = GetData;
+    } else if (Callback == DetectEngineInspectMultiBufferGeneric) {
+        new_engine->v2.GetMultiData = GetMultiData;
+    }
 
     if (g_app_inspect_engines == NULL) {
         g_app_inspect_engines = new_engine;
@@ -266,6 +237,12 @@ void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uin
 
         t->next = new_engine;
     }
+}
+
+void DetectAppLayerInspectEngineRegister(const char *name, AppProto alproto, uint32_t dir,
+        int progress, InspectEngineFuncPtr Callback, InspectionBufferGetDataPtr GetData)
+{
+    AppLayerInspectEngineRegisterInternal(name, alproto, dir, progress, Callback, GetData, NULL);
 }
 
 /* copy an inspect engine with transforms to a new list id. */
@@ -691,6 +668,7 @@ static void AppendAppInspectEngine(DetectEngineCtx *de_ctx,
     new_engine->sm_list = t->sm_list;
     new_engine->sm_list_base = t->sm_list_base;
     new_engine->smd = smd;
+    new_engine->match_on_null = DetectContentInspectionMatchOnAbsentBuffer(smd);
     new_engine->progress = t->progress;
     new_engine->v2 = t->v2;
     SCLogDebug("sm_list %d new_engine->v2 %p/%p/%p", new_engine->sm_list, new_engine->v2.Callback,
@@ -1023,7 +1001,6 @@ static void DetectBufferTypeFree(void)
 
     HashListTableFree(g_buffer_type_hash);
     g_buffer_type_hash = NULL;
-    return;
 }
 #endif
 static int DetectBufferTypeAdd(const char *string)
@@ -1649,10 +1626,10 @@ void InspectionBufferFree(InspectionBuffer *buffer)
  * \brief make sure that the buffer has at least 'min_size' bytes
  * Expand the buffer if necessary
  */
-void InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size)
+void *InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size)
 {
     if (likely(buffer->size >= min_size))
-        return;
+        return buffer->buf;
 
     uint32_t new_size = (buffer->size == 0) ? 4096 : buffer->size;
     while (new_size < min_size) {
@@ -1663,7 +1640,19 @@ void InspectionBufferCheckAndExpand(InspectionBuffer *buffer, uint32_t min_size)
     if (ptr != NULL) {
         buffer->buf = ptr;
         buffer->size = new_size;
+    } else {
+        return NULL;
     }
+    return buffer->buf;
+}
+
+void InspectionBufferTruncate(InspectionBuffer *buffer, uint32_t buf_len)
+{
+    DEBUG_VALIDATE_BUG_ON(buffer->buf == NULL);
+    DEBUG_VALIDATE_BUG_ON(buf_len > buffer->size);
+    buffer->inspect = buffer->buf;
+    buffer->inspect_len = buf_len;
+    buffer->initialized = true;
 }
 
 void InspectionBufferCopy(InspectionBuffer *buffer, uint8_t *buf, uint32_t buf_len)
@@ -1952,7 +1941,6 @@ static int DetectEngineInspectRulePayloadMatches(
         if (p->flags & PKT_DETECT_HAS_STREAMDATA) {
             pmatch = DetectEngineInspectStreamPayload(de_ctx, det_ctx, s, p->flow, p);
             if (pmatch) {
-                det_ctx->flags |= DETECT_ENGINE_THREAD_CTX_STREAM_CONTENT_MATCH;
                 *alert_flags |= PACKET_ALERT_FLAG_STREAM_MATCH;
             }
         }
@@ -2187,6 +2175,9 @@ uint8_t DetectEngineInspectBufferGeneric(DetectEngineCtx *de_ctx, DetectEngineTh
     const InspectionBuffer *buffer = engine->v2.GetData(det_ctx, transforms,
             f, flags, txv, list_id);
     if (unlikely(buffer == NULL)) {
+        if (eof && engine->match_on_null) {
+            return DETECT_ENGINE_INSPECT_SIG_MATCH;
+        }
         return eof ? DETECT_ENGINE_INSPECT_SIG_CANT_MATCH :
                      DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     }
@@ -2209,6 +2200,54 @@ uint8_t DetectEngineInspectBufferGeneric(DetectEngineCtx *de_ctx, DetectEngineTh
         return eof ? DETECT_ENGINE_INSPECT_SIG_CANT_MATCH :
                      DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
     }
+}
+
+// wrapper for both DetectAppLayerInspectEngineRegister and DetectAppLayerMpmRegister
+// with cast of callback function
+void DetectAppLayerMultiRegister(const char *name, AppProto alproto, uint32_t dir, int progress,
+        InspectionMultiBufferGetDataPtr GetData, int priority, int tx_min_progress)
+{
+    AppLayerInspectEngineRegisterInternal(
+            name, alproto, dir, progress, DetectEngineInspectMultiBufferGeneric, NULL, GetData);
+    DetectAppLayerMpmMultiRegister(name, dir, priority, PrefilterMultiGenericMpmRegister, GetData,
+            alproto, tx_min_progress);
+}
+
+uint8_t DetectEngineInspectMultiBufferGeneric(DetectEngineCtx *de_ctx,
+        DetectEngineThreadCtx *det_ctx, const DetectEngineAppInspectionEngine *engine,
+        const Signature *s, Flow *f, uint8_t flags, void *alstate, void *txv, uint64_t tx_id)
+{
+    uint32_t local_id = 0;
+    const DetectEngineTransforms *transforms = NULL;
+    if (!engine->mpm) {
+        transforms = engine->v2.transforms;
+    }
+
+    do {
+        InspectionBuffer *buffer = engine->v2.GetMultiData(
+                det_ctx, transforms, f, flags, txv, engine->sm_list, local_id);
+
+        if (buffer == NULL || buffer->inspect == NULL)
+            break;
+
+        // The GetData functions set buffer->flags to DETECT_CI_FLAGS_SINGLE
+        // This is not meant for streaming buffers
+        const bool match = DetectEngineContentInspectionBuffer(de_ctx, det_ctx, s, engine->smd,
+                NULL, f, buffer, DETECT_ENGINE_CONTENT_INSPECTION_MODE_STATE);
+        if (match) {
+            return DETECT_ENGINE_INSPECT_SIG_MATCH;
+        }
+        local_id++;
+    } while (1);
+    if (local_id == 0) {
+        // That means we did not get even one buffer value from the multi-buffer
+        const bool eof = (AppLayerParserGetStateProgress(f->proto, f->alproto, txv, flags) >
+                          engine->progress);
+        if (eof && engine->match_on_null) {
+            return DETECT_ENGINE_INSPECT_SIG_MATCH;
+        }
+    }
+    return DETECT_ENGINE_INSPECT_SIG_NO_MATCH;
 }
 
 /**
@@ -2486,13 +2525,20 @@ static DetectEngineCtx *DetectEngineCtxInitReal(
         goto error;
     }
 
+    de_ctx->sm_types_prefilter = SCCalloc(DETECT_TBLSIZE, sizeof(bool));
+    if (de_ctx->sm_types_prefilter == NULL) {
+        goto error;
+    }
+    de_ctx->sm_types_silent_error = SCCalloc(DETECT_TBLSIZE, sizeof(bool));
+    if (de_ctx->sm_types_silent_error == NULL) {
+        goto error;
+    }
     if (DetectEngineCtxLoadConf(de_ctx) == -1) {
         goto error;
     }
 
     SigGroupHeadHashInit(de_ctx);
     MpmStoreInit(de_ctx);
-    ThresholdHashInit(de_ctx);
     DetectParseDupSigHashInit(de_ctx);
     DetectAddressMapInit(de_ctx);
     DetectMetadataHashInit(de_ctx);
@@ -2504,7 +2550,7 @@ static DetectEngineCtx *DetectEngineCtxInitReal(
 
     SCClassConfInit(de_ctx);
     if (!SCClassConfLoadClassificationConfigFile(de_ctx, NULL)) {
-        if (RunmodeGetCurrent() == RUNMODE_CONF_TEST)
+        if (SCRunmodeGet() == RUNMODE_CONF_TEST)
             goto error;
     }
 
@@ -2513,7 +2559,7 @@ static DetectEngineCtx *DetectEngineCtxInitReal(
     }
     SCReferenceConfInit(de_ctx);
     if (SCRConfLoadReferenceConfigFile(de_ctx, NULL) < 0) {
-        if (RunmodeGetCurrent() == RUNMODE_CONF_TEST)
+        if (SCRunmodeGet() == RUNMODE_CONF_TEST)
             goto error;
     }
 
@@ -2525,7 +2571,6 @@ error:
         DetectEngineCtxFree(de_ctx);
     }
     return NULL;
-
 }
 
 DetectEngineCtx *DetectEngineCtxInitStubForMT(void)
@@ -2607,10 +2652,12 @@ void DetectEngineCtxFree(DetectEngineCtx *de_ctx)
     MpmStoreFree(de_ctx);
     DetectParseDupSigHashFree(de_ctx);
     SCSigSignatureOrderingModuleCleanup(de_ctx);
-    ThresholdContextDestroy(de_ctx);
     SigCleanSignatures(de_ctx);
     if (de_ctx->sig_array)
         SCFree(de_ctx->sig_array);
+
+    if (de_ctx->filedata_config)
+        SCFree(de_ctx->filedata_config);
 
     DetectEngineFreeFastPatternList(de_ctx);
     SCClassConfDeInitContext(de_ctx);
@@ -2619,6 +2666,8 @@ void DetectEngineCtxFree(DetectEngineCtx *de_ctx)
     SigGroupCleanup(de_ctx);
 
     SpmDestroyGlobalThreadCtx(de_ctx->spm_global_thread_ctx);
+    SCFree(de_ctx->sm_types_prefilter);
+    SCFree(de_ctx->sm_types_silent_error);
 
     MpmFactoryDeRegisterAllMpmCtxProfiles(de_ctx);
 
@@ -2641,8 +2690,8 @@ void DetectEngineCtxFree(DetectEngineCtx *de_ctx)
 #endif
     }
 
-    DetectPortCleanupList(de_ctx, de_ctx->tcp_whitelist);
-    DetectPortCleanupList(de_ctx, de_ctx->udp_whitelist);
+    DetectPortCleanupList(de_ctx, de_ctx->tcp_priorityports);
+    DetectPortCleanupList(de_ctx, de_ctx->udp_priorityports);
 
     DetectBufferTypeFreeDetectEngine(de_ctx);
     SCClassConfDeinit(de_ctx);
@@ -2745,7 +2794,7 @@ static int DetectEngineCtxLoadConf(DetectEngineCtx *de_ctx)
         }
     }
 
-    if (run_mode == RUNMODE_UNITTEST) {
+    if (RunmodeIsUnittests()) {
         de_ctx->sgh_mpm_ctx_cnf = ENGINE_SGH_MPM_FACTORY_CONTEXT_FULL;
     }
 
@@ -2883,55 +2932,82 @@ static int DetectEngineCtxLoadConf(DetectEngineCtx *de_ctx)
     SCLogDebug("de_ctx->inspection_recursion_limit: %d",
                de_ctx->inspection_recursion_limit);
 
-    /* parse port grouping whitelisting settings */
+    // default value is 4
+    de_ctx->guess_applayer_log_limit = 4;
+    if (ConfGetInt("detect.stream-tx-log-limit", &value) == 1) {
+        if (value >= 0 && value <= UINT8_MAX) {
+            de_ctx->guess_applayer_log_limit = (uint8_t)value;
+        } else {
+            SCLogWarning("Invalid value for detect-engine.stream-tx-log-limit: must be between 0 "
+                         "and 255, will default to 4");
+        }
+    }
+    int guess_applayer = 0;
+    if ((ConfGetBool("detect.guess-applayer-tx", &guess_applayer)) == 1) {
+        if (guess_applayer == 1) {
+            de_ctx->guess_applayer = true;
+        }
+    }
+
+    /* parse port grouping priority settings */
 
     const char *ports = NULL;
-    (void)ConfGet("detect.grouping.tcp-whitelist", &ports);
+    (void)ConfGet("detect.grouping.tcp-priority-ports", &ports);
     if (ports) {
-        SCLogConfig("grouping: tcp-whitelist %s", ports);
+        SCLogConfig("grouping: tcp-priority-ports %s", ports);
     } else {
-        ports = "53, 80, 139, 443, 445, 1433, 3306, 3389, 6666, 6667, 8080";
-        SCLogConfig("grouping: tcp-whitelist (default) %s", ports);
-
+        (void)ConfGet("detect.grouping.tcp-whitelist", &ports);
+        if (ports) {
+            SCLogConfig(
+                    "grouping: tcp-priority-ports from legacy 'tcp-whitelist' setting: %s", ports);
+        } else {
+            ports = "53, 80, 139, 443, 445, 1433, 3306, 3389, 6666, 6667, 8080";
+            SCLogConfig("grouping: tcp-priority-ports (default) %s", ports);
+        }
     }
-    if (DetectPortParse(de_ctx, &de_ctx->tcp_whitelist, ports) != 0) {
+    if (DetectPortParse(de_ctx, &de_ctx->tcp_priorityports, ports) != 0) {
         SCLogWarning("'%s' is not a valid value "
-                     "for detect.grouping.tcp-whitelist",
+                     "for detect.grouping.tcp-priority-ports",
                 ports);
     }
-    DetectPort *x = de_ctx->tcp_whitelist;
+    DetectPort *x = de_ctx->tcp_priorityports;
     for ( ; x != NULL;  x = x->next) {
         if (x->port != x->port2) {
             SCLogWarning("'%s' is not a valid value "
-                         "for detect.grouping.tcp-whitelist: only single ports allowed",
+                         "for detect.grouping.tcp-priority-ports: only single ports allowed",
                     ports);
-            DetectPortCleanupList(de_ctx, de_ctx->tcp_whitelist);
-            de_ctx->tcp_whitelist = NULL;
+            DetectPortCleanupList(de_ctx, de_ctx->tcp_priorityports);
+            de_ctx->tcp_priorityports = NULL;
             break;
         }
     }
 
     ports = NULL;
-    (void)ConfGet("detect.grouping.udp-whitelist", &ports);
+    (void)ConfGet("detect.grouping.udp-priority-ports", &ports);
     if (ports) {
-        SCLogConfig("grouping: udp-whitelist %s", ports);
+        SCLogConfig("grouping: udp-priority-ports %s", ports);
     } else {
-        ports = "53, 135, 5060";
-        SCLogConfig("grouping: udp-whitelist (default) %s", ports);
-
+        (void)ConfGet("detect.grouping.udp-whitelist", &ports);
+        if (ports) {
+            SCLogConfig(
+                    "grouping: udp-priority-ports from legacy 'udp-whitelist' setting: %s", ports);
+        } else {
+            ports = "53, 135, 5060";
+            SCLogConfig("grouping: udp-priority-ports (default) %s", ports);
+        }
     }
-    if (DetectPortParse(de_ctx, &de_ctx->udp_whitelist, ports) != 0) {
+    if (DetectPortParse(de_ctx, &de_ctx->udp_priorityports, ports) != 0) {
         SCLogWarning("'%s' is not a valid value "
-                     "for detect.grouping.udp-whitelist",
+                     "for detect.grouping.udp-priority-ports",
                 ports);
     }
-    for (x = de_ctx->udp_whitelist; x != NULL;  x = x->next) {
+    for (x = de_ctx->udp_priorityports; x != NULL; x = x->next) {
         if (x->port != x->port2) {
             SCLogWarning("'%s' is not a valid value "
-                         "for detect.grouping.udp-whitelist: only single ports allowed",
+                         "for detect.grouping.udp-priority-ports: only single ports allowed",
                     ports);
-            DetectPortCleanupList(de_ctx, de_ctx->udp_whitelist);
-            de_ctx->udp_whitelist = NULL;
+            DetectPortCleanupList(de_ctx, de_ctx->udp_priorityports);
+            de_ctx->udp_priorityports = NULL;
             break;
         }
     }
@@ -3229,7 +3305,6 @@ static TmEcode ThreadCtxDoInit (DetectEngineCtx *de_ctx, DetectEngineThreadCtx *
         if (det_ctx->base64_decoded == NULL) {
             return TM_ECODE_FAILED;
         }
-        det_ctx->base64_decoded_len_max = de_ctx->base64_decode_max_len;
         det_ctx->base64_decoded_len = 0;
     }
 
@@ -3323,6 +3398,21 @@ TmEcode DetectEngineThreadCtxInit(ThreadVars *tv, void *initdata, void **data)
     det_ctx->counter_alerts = StatsRegisterCounter("detect.alert", tv);
     det_ctx->counter_alerts_overflow = StatsRegisterCounter("detect.alert_queue_overflow", tv);
     det_ctx->counter_alerts_suppressed = StatsRegisterCounter("detect.alerts_suppressed", tv);
+
+    /* Register counter for Lua rule errors. */
+    det_ctx->lua_rule_errors = StatsRegisterCounter("detect.lua.errors", tv);
+
+    /* Register a counter for Lua blocked function attempts. */
+    det_ctx->lua_blocked_function_errors =
+            StatsRegisterCounter("detect.lua.blocked_function_errors", tv);
+
+    /* Register a counter for Lua instruction limit errors. */
+    det_ctx->lua_instruction_limit_errors =
+            StatsRegisterCounter("detect.lua.instruction_limit_errors", tv);
+
+    /* Register a counter for Lua memory limit errors. */
+    det_ctx->lua_memory_limit_errors = StatsRegisterCounter("detect.lua.memory_limit_errors", tv);
+
 #ifdef PROFILING
     det_ctx->counter_mpm_list = StatsRegisterAvgCounter("detect.mpm_list", tv);
     det_ctx->counter_nonmpm_list = StatsRegisterAvgCounter("detect.nonmpm_list", tv);
@@ -3496,6 +3586,8 @@ static void DetectEngineThreadCtxFree(DetectEngineThreadCtx *det_ctx)
     AppLayerDecoderEventsFreeEvents(&det_ctx->decoder_events);
 
     SCFree(det_ctx);
+
+    ThresholdCacheThreadFree();
 }
 
 TmEcode DetectEngineThreadCtxDeinit(ThreadVars *tv, void *data)
@@ -3514,12 +3606,6 @@ TmEcode DetectEngineThreadCtxDeinit(ThreadVars *tv, void *data)
     DetectEngineThreadCtxFree(det_ctx);
 
     return TM_ECODE_OK;
-}
-
-void DetectEngineThreadCtxInfo(ThreadVars *t, DetectEngineThreadCtx *det_ctx)
-{
-    /* XXX */
-    PatternMatchThreadPrint(&det_ctx->mtc, det_ctx->de_ctx->mpm_matcher);
 }
 
 static uint32_t DetectKeywordCtxHashFunc(HashListTable *ht, void *data, uint16_t datalen)
@@ -3888,12 +3974,12 @@ static int DetectEngineMultiTenantReloadTenant(uint32_t tenant_id, const char *f
     new_de_ctx->tenant_path = SCStrdup(filename);
     if (new_de_ctx->tenant_path == NULL) {
         SCLogError("Failed to duplicate path");
-        goto error;
+        goto new_de_ctx_error;
     }
 
     if (SigLoadSignatures(new_de_ctx, NULL, false) < 0) {
         SCLogError("Loading signatures failed.");
-        goto error;
+        goto new_de_ctx_error;
     }
 
     DetectEngineAddToMaster(new_de_ctx);
@@ -3902,6 +3988,9 @@ static int DetectEngineMultiTenantReloadTenant(uint32_t tenant_id, const char *f
     DetectEngineMoveToFreeList(old_de_ctx);
     DetectEngineDeReference(&old_de_ctx);
     return 0;
+
+new_de_ctx_error:
+    DetectEngineCtxFree(new_de_ctx);
 
 error:
     DetectEngineDeReference(&old_de_ctx);
@@ -4906,11 +4995,6 @@ void DetectEngineSetEvent(DetectEngineThreadCtx *det_ctx, uint8_t e)
     det_ctx->events++;
 }
 
-AppLayerDecoderEvents *DetectEngineGetEvents(DetectEngineThreadCtx *det_ctx)
-{
-    return det_ctx->decoder_events;
-}
-
 /*************************************Unittest*********************************/
 
 #ifdef UNITTESTS
@@ -4926,8 +5010,6 @@ static void DetectEngineDeInitYamlConf(void)
 {
     ConfDeInit();
     ConfRestoreContextBackup();
-
-    return;
 }
 
 static int DetectEngineTest01(void)
@@ -5125,5 +5207,4 @@ void DetectEngineRegisterTests(void)
     UtRegisterTest("DetectEngineTest08", DetectEngineTest08);
     UtRegisterTest("DetectEngineTest09", DetectEngineTest09);
 #endif
-    return;
 }

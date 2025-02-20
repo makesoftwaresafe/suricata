@@ -22,8 +22,8 @@
  *
  */
 
-#ifndef __UTIL_MPM_AC__H__
-#define __UTIL_MPM_AC__H__
+#ifndef SURICATA_UTIL_MPM_AC__H
+#define SURICATA_UTIL_MPM_AC__H
 
 #include "util-mpm.h"
 
@@ -36,6 +36,8 @@ typedef struct SCACPatternList_ {
 
     uint16_t offset;
     uint16_t depth;
+
+    bool endswith;
 
     /* sid(s) for this pattern */
     uint32_t sids_size;
@@ -79,4 +81,4 @@ typedef struct SCACCtx_ {
 
 void MpmACRegister(void);
 
-#endif /* __UTIL_MPM_AC__H__ */
+#endif /* SURICATA_UTIL_MPM_AC__H */

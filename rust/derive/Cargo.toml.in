@@ -1,11 +1,13 @@
 [package]
 name = "suricata-derive"
 version = "@PACKAGE_VERSION@"
+license = "GPL-2.0-only"
+description = "Derive macros for Suricata"
 edition = "2021"
+
 
 [lib]
 proc-macro = true
-path = "@e_rustdir@/derive/src/lib.rs"
 
 [dependencies]
 proc-macro-crate = "= 1.1.0"

@@ -5,6 +5,10 @@ on:
 
 permissions: read-all
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   DEBIAN_FRONTEND: "noninteractive"
 
@@ -16,7 +20,7 @@ jobs:
     container: ubuntu:20.04
     steps:
       - name: Caching ~/.cargo
-        uses: actions/cache@v3.3.1
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
         with:
           path: ~/.cargo
           key: commit-check-cargo
@@ -48,7 +52,6 @@ jobs:
                 libjansson-dev \
                 libevent-dev \
                 libevent-pthreads-2.1-7 \
-                libjansson-dev \
                 libpython2.7 \
                 libssl-dev \
                 make \
@@ -71,7 +74,7 @@ jobs:
           cd $HOME/.cargo/bin
           curl -OL https://github.com/eqrion/cbindgen/releases/download/v0.24.3/cbindgen
           chmod 755 cbindgen
-      - uses: actions/checkout@v3.3.0
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
       # The action above is supposed to do this for us, but it doesn't appear to stick.
@@ -85,7 +88,7 @@ jobs:
               git checkout $rev
               echo "Building rev ${rev}" | tee -a build_log.txt
               ./autogen.sh >> build_log.txt 2>&1
-              CC="sccache gcc" ./configure --enable-unittests >> build_log.txt 2>&1
+              CC="sccache gcc" ./configure --enable-warnings --enable-unittests --disable-lua >> build_log.txt 2>&1
               if ! make -j2 >> build_log.txt 2>&1; then
                   echo "::error ::Failed to build rev ${rev}"
                   tail -n 50 build_log.txt
@@ -94,7 +97,7 @@ jobs:
               make -ik distclean > /dev/null
           done
       - run: sccache -s
-      - uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce
+      - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         name: Uploading build log
         if: always()
         with:

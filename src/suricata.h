@@ -61,8 +61,8 @@
  * \author Victor Julien <victor@inliniac.net>
  */
 
-#ifndef __SURICATA_H__
-#define __SURICATA_H__
+#ifndef SURICATA_SURICATA_H
+#define SURICATA_SURICATA_H
 
 #include "suricata-common.h"
 
@@ -173,6 +173,7 @@ extern volatile uint8_t suricata_ctl_flags;
 extern int g_disable_randomness;
 extern uint16_t g_vlan_mask;
 extern uint16_t g_livedev_mask;
+extern uint8_t g_recurlvl_mask;
 
 /* Flag to disable hashing (almost) globally. */
 extern bool g_disable_hashing;
@@ -185,23 +186,44 @@ int RunmodeIsUnittests(void);
 #else
 #define RunmodeIsUnittests() 0
 #endif
-int RunmodeGetCurrent(void);
+
+/**
+ * \brief Get the current run mode.
+ */
+int SCRunmodeGet(void);
+
+/**
+ * \brief Set the current run mode.
+ *
+ * Mainly exposed outside of suricata.c as a unit-test helper.
+ */
+void SCRunmodeSet(int run_mode);
 
 int SuriHasSigFile(void);
 
-extern int run_mode;
-
-int SuricataMain(int argc, char **argv);
+void SuricataPreInit(const char *progname);
+void SuricataInit(void);
+void SuricataPostInit(void);
+void SuricataMainLoop(void);
+void SuricataShutdown(void);
 int InitGlobal(void);
+void GlobalsDestroy(void);
 int PostConfLoadedSetup(SCInstance *suri);
 void PostConfLoadedDetectSetup(SCInstance *suri);
+int SCFinalizeRunMode(void);
+TmEcode SCParseCommandLine(int argc, char **argv);
+int SCStartInternalRunMode(int argc, char **argv);
+TmEcode SCLoadYamlConfig(void);
 
 void PreRunInit(const int runmode);
 void PreRunPostPrivsDropInit(const int runmode);
 void PostRunDeinit(const int runmode, struct timeval *start_time);
 void RegisterAllModules(void);
 
+#ifdef OS_WIN32
+int WindowsInitService(int argc, char **argv);
+#endif
+
 const char *GetProgramVersion(void);
 
-#endif /* __SURICATA_H__ */
-
+#endif /* SURICATA_SURICATA_H */

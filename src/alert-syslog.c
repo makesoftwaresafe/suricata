@@ -87,6 +87,8 @@ static void AlertSyslogDeInitCtx(OutputCtx *output_ctx)
  */
 static OutputInitResult AlertSyslogInitCtx(ConfNode *conf)
 {
+    SCLogWarning("The syslog output has been deprecated and will be removed in Suricata 9.0.");
+
     OutputInitResult result = { NULL, false };
     const char *facility_s = ConfNodeLookupChildValue(conf, "facility");
     if (facility_s == NULL) {
@@ -197,7 +199,6 @@ static TmEcode AlertSyslogThreadDeinit(ThreadVars *t, void *data)
 static TmEcode AlertSyslogIPv4(ThreadVars *tv, const Packet *p, void *data)
 {
     AlertSyslogThread *ast = (AlertSyslogThread *)data;
-    int i;
     const char *action = "";
 
     if (p->alerts.cnt == 0)
@@ -205,26 +206,24 @@ static TmEcode AlertSyslogIPv4(ThreadVars *tv, const Packet *p, void *data)
 
     char proto[16] = "";
     const char *protoptr;
-    if (SCProtoNameValid(IPV4_GET_IPPROTO(p))) {
-        protoptr = known_proto[IPV4_GET_IPPROTO(p)];
+    const IPV4Hdr *ipv4h = PacketGetIPv4(p);
+    const uint8_t ipproto = IPV4_GET_RAW_IPPROTO(ipv4h);
+    if (SCProtoNameValid(ipproto)) {
+        protoptr = known_proto[ipproto];
     } else {
-        snprintf(proto, sizeof(proto), "PROTO:%03" PRIu32, IPV4_GET_IPPROTO(p));
+        snprintf(proto, sizeof(proto), "PROTO:%03" PRIu8, ipproto);
         protoptr = proto;
     }
 
-    /* Not sure if this mutex is needed around calls to syslog. */
-    SCMutexLock(&ast->file_ctx->fp_mutex);
+    char srcip[16], dstip[16];
+    PrintInet(AF_INET, (const void *)GET_IPV4_SRC_ADDR_PTR(p), srcip, sizeof(srcip));
+    PrintInet(AF_INET, (const void *)GET_IPV4_DST_ADDR_PTR(p), dstip, sizeof(dstip));
 
-    for (i = 0; i < p->alerts.cnt; i++) {
+    for (int i = 0; i < p->alerts.cnt; i++) {
         const PacketAlert *pa = &p->alerts.alerts[i];
         if (unlikely(pa->s == NULL)) {
             continue;
         }
-
-        char srcip[16], dstip[16];
-
-        PrintInet(AF_INET, (const void *)GET_IPV4_SRC_ADDR_PTR(p), srcip, sizeof(srcip));
-        PrintInet(AF_INET, (const void *)GET_IPV4_DST_ADDR_PTR(p), dstip, sizeof(dstip));
 
         if ((pa->action & ACTION_DROP) && EngineModeIsIPS()) {
             action = "[Drop] ";
@@ -232,13 +231,15 @@ static TmEcode AlertSyslogIPv4(ThreadVars *tv, const Packet *p, void *data)
             action = "[wDrop] ";
         }
 
+        /* Not sure if this mutex is needed around calls to syslog. */
+        SCMutexLock(&ast->file_ctx->fp_mutex);
         syslog(alert_syslog_level, "%s[%" PRIu32 ":%" PRIu32 ":%"
                 PRIu32 "] %s [Classification: %s] [Priority: %"PRIu32"]"
                 " {%s} %s:%" PRIu32 " -> %s:%" PRIu32 "", action, pa->s->gid,
                 pa->s->id, pa->s->rev, pa->s->msg, pa->s->class_msg, pa->s->prio,
                 protoptr,  srcip, p->sp, dstip, p->dp);
+        SCMutexUnlock(&ast->file_ctx->fp_mutex);
     }
-    SCMutexUnlock(&ast->file_ctx->fp_mutex);
 
     return TM_ECODE_OK;
 }
@@ -255,7 +256,6 @@ static TmEcode AlertSyslogIPv4(ThreadVars *tv, const Packet *p, void *data)
 static TmEcode AlertSyslogIPv6(ThreadVars *tv, const Packet *p, void *data)
 {
     AlertSyslogThread *ast = (AlertSyslogThread *)data;
-    int i;
     const char *action = "";
 
     if (p->alerts.cnt == 0)
@@ -263,25 +263,23 @@ static TmEcode AlertSyslogIPv6(ThreadVars *tv, const Packet *p, void *data)
 
     char proto[16] = "";
     const char *protoptr;
-    if (SCProtoNameValid(IPV6_GET_L4PROTO(p))) {
-        protoptr = known_proto[IPV6_GET_L4PROTO(p)];
+    const uint8_t ipproto = IPV6_GET_L4PROTO(p);
+    if (SCProtoNameValid(ipproto)) {
+        protoptr = known_proto[ipproto];
     } else {
-        snprintf(proto, sizeof(proto), "PROTO:03%" PRIu32, IPV6_GET_L4PROTO(p));
+        snprintf(proto, sizeof(proto), "PROTO:03%" PRIu8, ipproto);
         protoptr = proto;
     }
 
-    SCMutexLock(&ast->file_ctx->fp_mutex);
+    char srcip[46], dstip[46];
+    PrintInet(AF_INET6, (const void *)GET_IPV6_SRC_ADDR(p), srcip, sizeof(srcip));
+    PrintInet(AF_INET6, (const void *)GET_IPV6_DST_ADDR(p), dstip, sizeof(dstip));
 
-    for (i = 0; i < p->alerts.cnt; i++) {
+    for (int i = 0; i < p->alerts.cnt; i++) {
         const PacketAlert *pa = &p->alerts.alerts[i];
         if (unlikely(pa->s == NULL)) {
             continue;
         }
-
-        char srcip[46], dstip[46];
-
-        PrintInet(AF_INET6, (const void *)GET_IPV6_SRC_ADDR(p), srcip, sizeof(srcip));
-        PrintInet(AF_INET6, (const void *)GET_IPV6_DST_ADDR(p), dstip, sizeof(dstip));
 
         if ((pa->action & ACTION_DROP) && EngineModeIsIPS()) {
             action = "[Drop] ";
@@ -289,15 +287,15 @@ static TmEcode AlertSyslogIPv6(ThreadVars *tv, const Packet *p, void *data)
             action = "[wDrop] ";
         }
 
+        SCMutexLock(&ast->file_ctx->fp_mutex);
         syslog(alert_syslog_level, "%s[%" PRIu32 ":%" PRIu32 ":%"
                 "" PRIu32 "] %s [Classification: %s] [Priority: %"
                 "" PRIu32 "] {%s} %s:%" PRIu32 " -> %s:%" PRIu32 "",
                 action, pa->s->gid, pa->s->id, pa->s->rev, pa->s->msg, pa->s->class_msg,
                 pa->s->prio, protoptr, srcip, p->sp,
                 dstip, p->dp);
-
+        SCMutexUnlock(&ast->file_ctx->fp_mutex);
     }
-    SCMutexUnlock(&ast->file_ctx->fp_mutex);
 
     return TM_ECODE_OK;
 }
@@ -314,20 +312,17 @@ static TmEcode AlertSyslogIPv6(ThreadVars *tv, const Packet *p, void *data)
 static TmEcode AlertSyslogDecoderEvent(ThreadVars *tv, const Packet *p, void *data)
 {
     AlertSyslogThread *ast = (AlertSyslogThread *)data;
-    int i;
     const char *action = "";
 
     if (p->alerts.cnt == 0)
         return TM_ECODE_OK;
-
-    SCMutexLock(&ast->file_ctx->fp_mutex);
 
     char temp_buf_hdr[512];
     char temp_buf_pkt[65] = "";
     char temp_buf_tail[64];
     char alert[2048] = "";
 
-    for (i = 0; i < p->alerts.cnt; i++) {
+    for (int i = 0; i < p->alerts.cnt; i++) {
         const PacketAlert *pa = &p->alerts.alerts[i];
         if (unlikely(pa->s == NULL)) {
             continue;
@@ -357,9 +352,10 @@ static TmEcode AlertSyslogDecoderEvent(ThreadVars *tv, const Packet *p, void *da
         }
         strlcat(alert, temp_buf_tail, sizeof(alert));
 
+        SCMutexLock(&ast->file_ctx->fp_mutex);
         syslog(alert_syslog_level, "%s", alert);
+        SCMutexUnlock(&ast->file_ctx->fp_mutex);
     }
-    SCMutexUnlock(&ast->file_ctx->fp_mutex);
 
     return TM_ECODE_OK;
 }
@@ -371,9 +367,9 @@ static bool AlertSyslogCondition(ThreadVars *tv, void *thread_data, const Packet
 
 static int AlertSyslogLogger(ThreadVars *tv, void *thread_data, const Packet *p)
 {
-    if (PKT_IS_IPV4(p)) {
+    if (PacketIsIPv4(p)) {
         return AlertSyslogIPv4(tv, p, thread_data);
-    } else if (PKT_IS_IPV6(p)) {
+    } else if (PacketIsIPv6(p)) {
         return AlertSyslogIPv6(tv, p, thread_data);
     } else if (p->events.cnt > 0) {
         return AlertSyslogDecoderEvent(tv, p, thread_data);
@@ -388,8 +384,8 @@ static int AlertSyslogLogger(ThreadVars *tv, void *thread_data, const Packet *p)
 void AlertSyslogRegister (void)
 {
 #ifndef OS_WIN32
-    OutputRegisterPacketModule(LOGGER_ALERT_SYSLOG, MODULE_NAME, "syslog",
-        AlertSyslogInitCtx, AlertSyslogLogger, AlertSyslogCondition,
-        AlertSyslogThreadInit, AlertSyslogThreadDeinit, NULL);
+    OutputRegisterPacketModule(LOGGER_ALERT_SYSLOG, MODULE_NAME, "syslog", AlertSyslogInitCtx,
+            AlertSyslogLogger, AlertSyslogCondition, AlertSyslogThreadInit,
+            AlertSyslogThreadDeinit);
 #endif /* !OS_WIN32 */
 }
