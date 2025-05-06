@@ -1787,7 +1787,7 @@ void AppLayerParserRegisterProtocolParsers(void)
     RegisterDNP3Parsers();
     RegisterNFSTCPParsers();
     RegisterNFSUDPParsers();
-    rs_register_ntp_parser();
+    SCRegisterNtpParser();
     RegisterTFTPParsers();
     RegisterIKEParsers();
     SCRegisterKrb5Parser();
@@ -1795,10 +1795,10 @@ void AppLayerParserRegisterProtocolParsers(void)
     SCRegisterSnmpParser();
     SCRegisterSipParser();
     SCRegisterQuicParser();
-    rs_websocket_register_parser();
+    SCRegisterWebSocketParser();
     SCRegisterLdapTcpParser();
     SCRegisterLdapUdpParser();
-    rs_template_register_parser();
+    SCRegisterTemplateParser();
     SCRfbRegisterParser();
     SCMqttRegisterParser();
     SCRegisterPgsqlParser();

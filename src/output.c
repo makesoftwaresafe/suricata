@@ -901,8 +901,7 @@ void OutputRegisterRootLoggers(void)
     // ALPROTO_DCERPC special: uses state
     RegisterSimpleJsonApplayerLogger(ALPROTO_DNS, (EveJsonSimpleTxLogFunc)AlertJsonDns, NULL);
     // either need a cast here or in rust for ModbusTransaction, done here
-    RegisterSimpleJsonApplayerLogger(
-            ALPROTO_MODBUS, (EveJsonSimpleTxLogFunc)rs_modbus_to_json, NULL);
+    RegisterSimpleJsonApplayerLogger(ALPROTO_MODBUS, (EveJsonSimpleTxLogFunc)SCModbusToJson, NULL);
     RegisterSimpleJsonApplayerLogger(ALPROTO_ENIP, (EveJsonSimpleTxLogFunc)SCEnipLoggerLog, NULL);
     RegisterSimpleJsonApplayerLogger(ALPROTO_DNP3, (EveJsonSimpleTxLogFunc)AlertJsonDnp3, NULL);
     // ALPROTO_NFS special: uses state
@@ -917,19 +916,18 @@ void OutputRegisterRootLoggers(void)
     RegisterSimpleJsonApplayerLogger(ALPROTO_QUIC, (EveJsonSimpleTxLogFunc)SCQuicLogJson, NULL);
     // ALPROTO_DHCP TODO missing
     RegisterSimpleJsonApplayerLogger(ALPROTO_SIP, (EveJsonSimpleTxLogFunc)SCSipLogJson, NULL);
-    RegisterSimpleJsonApplayerLogger(ALPROTO_RFB, (EveJsonSimpleTxLogFunc)rs_rfb_logger_log, NULL);
+    RegisterSimpleJsonApplayerLogger(ALPROTO_RFB, (EveJsonSimpleTxLogFunc)SCRfbJsonLogger, NULL);
     RegisterSimpleJsonApplayerLogger(ALPROTO_POP3, (EveJsonSimpleTxLogFunc)SCPop3LoggerLog, NULL);
     RegisterSimpleJsonApplayerLogger(
             ALPROTO_MQTT, (EveJsonSimpleTxLogFunc)JsonMQTTAddMetadata, NULL);
     RegisterSimpleJsonApplayerLogger(
             ALPROTO_PGSQL, (EveJsonSimpleTxLogFunc)JsonPgsqlAddMetadata, NULL);
     RegisterSimpleJsonApplayerLogger(
-            ALPROTO_WEBSOCKET, (EveJsonSimpleTxLogFunc)rs_websocket_logger_log, NULL);
-    RegisterSimpleJsonApplayerLogger(
-            ALPROTO_LDAP, (EveJsonSimpleTxLogFunc)rs_ldap_logger_log, NULL);
+            ALPROTO_WEBSOCKET, (EveJsonSimpleTxLogFunc)SCWebSocketLoggerLog, NULL);
+    RegisterSimpleJsonApplayerLogger(ALPROTO_LDAP, (EveJsonSimpleTxLogFunc)SCLdapLoggerLog, NULL);
     RegisterSimpleJsonApplayerLogger(ALPROTO_DOH2, (EveJsonSimpleTxLogFunc)AlertJsonDoh2, NULL);
     RegisterSimpleJsonApplayerLogger(
-            ALPROTO_TEMPLATE, (EveJsonSimpleTxLogFunc)rs_template_logger_log, NULL);
+            ALPROTO_TEMPLATE, (EveJsonSimpleTxLogFunc)SCTemplateLoggerLog, NULL);
     RegisterSimpleJsonApplayerLogger(ALPROTO_RDP, (EveJsonSimpleTxLogFunc)SCRdpToJson, NULL);
     // special case : http2 is logged in http object
     RegisterSimpleJsonApplayerLogger(ALPROTO_HTTP2, (EveJsonSimpleTxLogFunc)SCHttp2LogJson, "http");

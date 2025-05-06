@@ -148,8 +148,8 @@ def patch_app_layer_parser_c(proto):
     output = io.StringIO()
     inlines = open(filename).readlines()
     for line in inlines:
-        if line.find("rs_template_register_parser") > -1:
-            output.write(line.replace("template", proto.lower()))
+        if line.find("SCRegisterTemplateParser") > -1:
+            output.write(line.replace("Template", proto))
         output.write(line)
     open(filename, "w").write(output.getvalue())
 
@@ -207,9 +207,9 @@ def logger_patch_output_c(proto):
             output.write(inlines[i+2].replace("TEMPLATE", proto.upper()).replace(
                     "template", proto.lower()).replace("Template", proto))
             output.write(inlines[i+3])
-        if line.find("rs_template_logger_log") > -1:
+        if line.find("SCTemplateLoggerLog") > -1:
             output.write(inlines[i].replace("TEMPLATE", proto.upper()).replace(
-                    "template", proto.lower()))
+                    "Template", proto))
             # RegisterSimpleJsonApplayerLogger( on its own line for clang-format
             output.write(inlines[i-1])
         output.write(line)
